@@ -316,6 +316,13 @@ app.listen(PORT, () => {
 // ----------------------------
 console.log("ABOUT TO CALL DISCORD LOGIN");
 
-client.login(process.env.DISCORD_TOKEN)
-  .then(() => console.log("🔐 Discord login promise resolved"))
-  .catch((err) => console.error("❌ Discord login failed:", err));
+(async () => {
+  try {
+    const token = (process.env.DISCORD_TOKEN || "").trim();
+    console.log("Discord token length:", token.length);
+    const loginResult = await client.login(token);
+    console.log("Discord login promise resolved:", !!loginResult);
+  } catch (err) {
+    console.error("❌ Discord login failed:", err);
+  }
+})();
