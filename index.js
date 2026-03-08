@@ -4,28 +4,14 @@ const { Client, GatewayIntentBits, EmbedBuilder } = require("discord.js");
 const crypto = require("crypto");
 const fetch = (...args) => import("node-fetch").then(({ default: f }) => f(...args));
 
+console.log("=== INDEX.JS STARTING ===");
+
 const app = express();
 const PORT = process.env.PORT || 3000;
 
 // ----------------------------
-// ENV CHECKS
+// ENV CHECK
 // ----------------------------
-const requiredEnv = [
-  "DISCORD_TOKEN",
-  "DISCORD_CHANNEL_ID",
-  "TWITCH_CLIENT_ID",
-  "TWITCH_CLIENT_SECRET",
-  "TWITCH_WEBHOOK_SECRET",
-  "TWITCH_CALLBACK_URL",
-  "TWITCH_USER_LOGINS"
-];
-
-for (const key of requiredEnv) {
-  if (!process.env[key]) {
-    console.error(`❌ Missing environment variable: ${key}`);
-  }
-}
-
 console.log("ENV CHECK");
 console.log("DISCORD_TOKEN loaded:", !!process.env.DISCORD_TOKEN);
 console.log("DISCORD_CHANNEL_ID loaded:", !!process.env.DISCORD_CHANNEL_ID);
@@ -36,7 +22,7 @@ console.log("TWITCH_CALLBACK_URL loaded:", !!process.env.TWITCH_CALLBACK_URL);
 console.log("TWITCH_USER_LOGINS loaded:", !!process.env.TWITCH_USER_LOGINS);
 
 // ----------------------------
-// EXPRESS RAW BODY FOR TWITCH
+// EXPRESS RAW BODY
 // ----------------------------
 app.use(express.json({
   verify: (req, res, buf) => {
@@ -47,30 +33,29 @@ app.use(express.json({
 // ----------------------------
 // DISCORD CLIENT
 // ----------------------------
+console.log("Creating Discord client...");
+
 const client = new Client({
   intents: [GatewayIntentBits.Guilds]
 });
 
 client.once("ready", async () => {
-  console.log(`✅ Logged in as ${client.user.tag}`);
+  console.log("✅ Discord READY event fired");
+  console.log(`Logged in as ${client.user.tag}`);
 
   try {
     const channel = await client.channels.fetch(process.env.DISCORD_CHANNEL_ID);
-    if (channel) {
-      console.log(`✅ Discord channel found: ${channel.id}`);
-    } else {
-      console.warn("⚠️ Discord channel not found");
-    }
+    console.log("Discord channel fetch result:", !!channel);
   } catch (err) {
     console.error("❌ Failed to fetch Discord channel:", err);
   }
 
   try {
-    console.log("🔄 Starting Twitch subscription setup...");
+    console.log("Starting Twitch subscription setup...");
     await subscribeToTwitchUsers();
-    console.log("✅ Twitch subscription setup complete");
+    console.log("✅ Twitch subscription setup finished");
   } catch (err) {
-    console.error("❌ Error during Twitch startup:", err);
+    console.error("❌ Twitch subscription setup error:", err);
   }
 });
 
@@ -89,6 +74,8 @@ app.get("/", (req, res) => {
 // TWITCH HELPERS
 // ----------------------------
 async function getTwitchToken() {
+  console.log("Requesting Twitch OAuth token...");
+
   const res = await fetch("https://id.twitch.tv/oauth2/token", {
     method: "POST",
     headers: { "Content-Type": "application/x-www-form-urlencoded" },
@@ -101,15 +88,19 @@ async function getTwitchToken() {
 
   const data = await res.json();
 
-  if (!res.ok) {
-    throw new Error(`Failed to get Twitch token: ${JSON.stringify(data)}`);
+  if (!data.access_token) {
+    console.error("❌ Twitch OAuth failure:", data);
+    throw new Error("Failed to get Twitch token");
   }
 
+  console.log("✅ Twitch OAuth token received");
   return data.access_token;
 }
 
 async function getTwitchUserIds(token, logins) {
-  const params = logins.map((l) => `login=${encodeURIComponent(l)}`).join("&");
+  console.log("Looking up Twitch users:", logins);
+
+  const params = logins.map(l => `login=${encodeURIComponent(l)}`).join("&");
 
   const res = await fetch(`https://api.twitch.tv/helix/users?${params}`, {
     headers: {
@@ -124,6 +115,7 @@ async function getTwitchUserIds(token, logins) {
     throw new Error(`Failed to get Twitch users: ${JSON.stringify(data)}`);
   }
 
+  console.log("Twitch users found:", data.data?.length || 0);
   return data.data || [];
 }
 
@@ -169,12 +161,14 @@ async function getStreamInfo(token, userId) {
 }
 
 async function subscribeToTwitchUsers() {
+  console.log("Preparing Twitch subscription list...");
+
   const logins = process.env.TWITCH_USER_LOGINS
     .split(",")
-    .map((l) => l.trim().toLowerCase())
+    .map(l => l.trim().toLowerCase())
     .filter(Boolean);
 
-  console.log("Twitch users to monitor:", logins.join(", "));
+  console.log("Users to monitor:", logins.join(", "));
 
   const token = await getTwitchToken();
   const users = await getTwitchUserIds(token, logins);
@@ -185,6 +179,7 @@ async function subscribeToTwitchUsers() {
   }
 
   for (const user of users) {
+    console.log("Subscribing to:", user.login);
     const result = await createEventSubSubscription(token, user.id);
 
     if (!result.ok && result.status !== 409) {
@@ -206,6 +201,8 @@ const processedMessageIds = new Set();
 // TWITCH EVENTSUB WEBHOOK
 // ----------------------------
 app.post("/twitch/eventsub", async (req, res) => {
+  console.log("EventSub request received");
+
   try {
     const secret = process.env.TWITCH_WEBHOOK_SECRET;
     const messageId = req.headers["twitch-eventsub-message-id"];
@@ -260,7 +257,6 @@ app.post("/twitch/eventsub", async (req, res) => {
 
       const token = await getTwitchToken();
       const stream = await getStreamInfo(token, broadcaster_user_id);
-
       const channel = await client.channels.fetch(process.env.DISCORD_CHANNEL_ID);
 
       if (!channel) {
@@ -301,6 +297,7 @@ app.post("/twitch/eventsub", async (req, res) => {
     }
 
     return res.status(200).send("Unhandled message type");
+
   } catch (err) {
     console.error("❌ Error in /twitch/eventsub:", err);
     return res.status(500).send("Internal Server Error");
@@ -315,8 +312,10 @@ app.listen(PORT, () => {
 });
 
 // ----------------------------
-// START DISCORD LOGIN (once, here only)
+// DISCORD LOGIN
 // ----------------------------
+console.log("ABOUT TO CALL DISCORD LOGIN");
+
 client.login(process.env.DISCORD_TOKEN)
-  .then(() => console.log("🔐 Discord login initiated"))
+  .then(() => console.log("🔐 Discord login promise resolved"))
   .catch((err) => console.error("❌ Discord login failed:", err));
