@@ -10,6 +10,17 @@ const app = express();
 const PORT = process.env.PORT || 3000;
 
 // ----------------------------
+// GLOBAL ERROR LOGGING
+// ----------------------------
+process.on("unhandledRejection", (reason) => {
+  console.error("❌ UNHANDLED REJECTION:", reason);
+});
+
+process.on("uncaughtException", (err) => {
+  console.error("❌ UNCAUGHT EXCEPTION:", err);
+});
+
+// ----------------------------
 // ENV CHECK
 // ----------------------------
 console.log("ENV CHECK");
@@ -61,6 +72,26 @@ client.once("ready", async () => {
 
 client.on("error", (err) => {
   console.error("❌ Discord client error:", err);
+});
+
+client.on("warn", (info) => {
+  console.warn("⚠️ Discord warn:", info);
+});
+
+client.on("shardReady", (id) => {
+  console.log(`✅ Discord shard ready: ${id}`);
+});
+
+client.on("shardDisconnect", (event, id) => {
+  console.warn(`⚠️ Discord shard disconnected: ${id}`, event?.code, event?.reason);
+});
+
+client.on("shardError", (error, shardId) => {
+  console.error(`❌ Discord shard error on shard ${shardId}:`, error);
+});
+
+client.on("invalidated", () => {
+  console.error("❌ Discord session invalidated");
 });
 
 // ----------------------------
@@ -312,15 +343,45 @@ app.listen(PORT, () => {
 });
 
 // ----------------------------
-// DISCORD LOGIN
+// DISCORD TOKEN VALIDATION + LOGIN
 // ----------------------------
-console.log("ABOUT TO CALL DISCORD LOGIN");
+async function validateDiscordToken(token) {
+  console.log("Validating Discord token via REST...");
+
+  const res = await fetch("https://discord.com/api/v10/users/@me", {
+    headers: {
+      Authorization: `Bot ${token}`
+    }
+  });
+
+  const text = await res.text();
+  console.log("Discord REST status:", res.status);
+  console.log("Discord REST body:", text);
+
+  return res.ok;
+}
 
 (async () => {
   try {
+    console.log("ABOUT TO CALL DISCORD LOGIN");
+
     const token = (process.env.DISCORD_TOKEN || "").trim();
     console.log("Discord token length:", token.length);
+
+    const valid = await validateDiscordToken(token);
+    console.log("Discord token valid:", valid);
+
+    if (!valid) {
+      throw new Error("❌ Discord token failed REST validation");
+    }
+
+    const timeout = setTimeout(() => {
+      console.error("❌ Discord login timeout after 15000ms — gateway may be blocked on Render");
+    }, 15000);
+
     const loginResult = await client.login(token);
+    clearTimeout(timeout);
+
     console.log("Discord login promise resolved:", !!loginResult);
   } catch (err) {
     console.error("❌ Discord login failed:", err);
