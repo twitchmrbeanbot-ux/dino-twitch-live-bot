@@ -135,27 +135,25 @@ async function lockChannelsForUnverified() {
 
   for (const channel of channels.values()) {
     if (!channel) continue;
-
-    // Skip ONBOARDING category and its children
     if (channel.id === onboardingCategoryId) continue;
     if (channel.parentId === onboardingCategoryId) continue;
 
-    // Allow Unverified to see #welcome and #rules only
     if (channel.id === WELCOME_CHANNEL_ID || channel.id === RULES_CHANNEL_ID) {
       await channel.permissionOverwrites.edit(ROLE_IDS.unverified, {
         ViewChannel: true,
         SendMessages: false,
-        AddReactions: true,
+        AddReactions: false,
         ReadMessageHistory: true
       }).catch(() => {});
       continue;
     }
 
-    // Deny everything else
-    if (channel.type === ChannelType.GuildCategory ||
-        channel.type === ChannelType.GuildText ||
-        channel.type === ChannelType.GuildVoice ||
-        channel.type === ChannelType.GuildAnnouncement) {
+    if (
+      channel.type === ChannelType.GuildCategory ||
+      channel.type === ChannelType.GuildText ||
+      channel.type === ChannelType.GuildVoice ||
+      channel.type === ChannelType.GuildAnnouncement
+    ) {
       await channel.permissionOverwrites.edit(ROLE_IDS.unverified, {
         ViewChannel: false
       }).catch(() => {});
@@ -167,24 +165,22 @@ async function lockChannelsForUnverified() {
 
 // ----------------------------
 // SETUP RULES MESSAGE
+// (for existing members only)
 // ----------------------------
 async function setupRulesMessage() {
   const rulesChannel = await client.channels.fetch(RULES_CHANNEL_ID);
   const messages = await rulesChannel.messages.fetch({ limit: 10 });
   const botMessages = messages.filter(m => m.author.id === client.user.id && m.embeds.length > 0);
 
-  if (botMessages.size >= 2) {
+  if (botMessages.size >= 1) {
     const sorted = botMessages.sort((a, b) => a.createdTimestamp - b.createdTimestamp);
     rulesMessageId = sorted.first().id;
-    roleMessageId = sorted.last().id;
+    if (botMessages.size >= 2) roleMessageId = sorted.last().id;
     console.log("ℹ️ Rules messages already exist");
     return;
   }
 
-  for (const msg of botMessages.values()) {
-    await msg.delete().catch(() => {});
-  }
-
+  // Post rules embed
   const rulesEmbed = new EmbedBuilder()
     .setTitle("📋 Server Rules")
     .setDescription(
@@ -207,21 +203,20 @@ async function setupRulesMessage() {
       "Follow moderator instructions. Breaking rules may result in a warning, mute, kick, or ban.\n\n" +
       "✔️ **We're all here to hang out, game, and have fun. Be respectful and enjoy the community.**"
     )
-    .setColor(0x9146FF)
-    .setFooter({ text: "React with ✅ below to verify and gain access to the server" });
+    .setColor(0x9146FF);
 
   const rulesMsg = await rulesChannel.send({ embeds: [rulesEmbed] });
-  await rulesMsg.react("✅");
   rulesMessageId = rulesMsg.id;
   console.log("✅ Rules message posted");
 
+  // Role picker for existing members
   const roleEmbed = new EmbedBuilder()
     .setTitle("🎭 Existing Members — Pick Your Roles")
     .setDescription(
       "Already part of the crew? Pick your content role below!\n\n" +
       "🎮 — **Streamer** — You stream on Twitch\n" +
       "👀 — **Viewer** — You watch streams\n\n" +
-      "*New members will go through the full onboarding flow after verifying.*"
+      "*New members go through the private onboarding flow automatically when they join.*"
     )
     .setColor(0x9146FF);
 
@@ -254,16 +249,15 @@ client.on("guildMemberAdd", async (member) => {
     console.log(`✅ Assigned Unverified role to ${member.user.tag}`);
 
     const guild = await client.guilds.fetch(GUILD_ID);
-    const welcomeChannel = await client.channels.fetch(WELCOME_CHANNEL_ID);
 
+    // Post welcome in #welcome
+    const welcomeChannel = await client.channels.fetch(WELCOME_CHANNEL_ID);
     const welcomeEmbed = new EmbedBuilder()
       .setTitle(`🦕 Welcome to the server, ${member.user.username}!`)
       .setDescription(
         `Hey ${member}! Welcome to the community! 🎉\n\n` +
-        "**To get started:**\n" +
-        `1. Head over to <#${RULES_CHANNEL_ID}> and read the rules\n` +
-        "2. React with ✅ to verify your age and gain access\n" +
-        "3. Pick your roles in your private welcome channel\n\n" +
+        "**Check your private onboarding channel to get started!**\n" +
+        "DinoBot has set up a private channel just for you where you can read the rules and pick your roles.\n\n" +
         "We're happy to have you here!"
       )
       .setThumbnail(member.user.displayAvatarURL({ dynamic: true }))
@@ -273,101 +267,11 @@ client.on("guildMemberAdd", async (member) => {
 
     await welcomeChannel.send({ embeds: [welcomeEmbed] });
 
+    // Immediately create private onboarding channel
+    await createOnboardingChannel(guild, member);
+
   } catch (err) {
     console.error("❌ Error handling new member:", err);
-  }
-});
-
-// ----------------------------
-// REACTION ADD — VERIFY
-// ----------------------------
-client.on("messageReactionAdd", async (reaction, user) => {
-  try {
-    if (user.bot) return;
-    if (reaction.partial) await reaction.fetch();
-    if (reaction.message.partial) await reaction.message.fetch();
-
-    if (reaction.message.id === rulesMessageId && reaction.emoji.name === "✅") {
-      const guild = await client.guilds.fetch(GUILD_ID);
-      const member = await guild.members.fetch(user.id);
-
-      if (!member.roles.cache.has(ROLE_IDS.unverified)) return;
-
-      await member.roles.remove(ROLE_IDS.unverified);
-      await member.roles.add(ROLE_IDS.goofyGoobers);
-      console.log(`✅ Verified: ${user.tag}`);
-
-      await createOnboardingChannel(guild, member);
-    }
-
-  } catch (err) {
-    console.error("❌ Reaction add error:", err);
-  }
-});
-
-// ----------------------------
-// REACTION REMOVE — UNVERIFY
-// ----------------------------
-client.on("messageReactionRemove", async (reaction, user) => {
-  try {
-    if (user.bot) return;
-    if (reaction.partial) await reaction.fetch();
-    if (reaction.message.partial) await reaction.message.fetch();
-
-    const guild = await client.guilds.fetch(GUILD_ID);
-    const member = await guild.members.fetch(user.id);
-
-    // Un-verify — remove all assigned roles and re-lock
-    if (reaction.message.id === rulesMessageId && reaction.emoji.name === "✅") {
-      const rolesToRemove = [
-        ROLE_IDS.goofyGoobers,
-        ROLE_IDS.streamer,
-        ROLE_IDS.viewer,
-        ROLE_IDS.bros,
-        ROLE_IDS.gurls
-      ];
-
-      for (const roleId of rolesToRemove) {
-        if (member.roles.cache.has(roleId)) {
-          await member.roles.remove(roleId).catch(() => {});
-        }
-      }
-
-      await member.roles.add(ROLE_IDS.unverified);
-      console.log(`🔒 Unverified: ${user.tag} — all roles removed`);
-
-      // Delete their onboarding channel if it still exists
-      const channels = await guild.channels.fetch();
-      const onboardingChannel = channels.find(
-        c => c.parentId === onboardingCategoryId &&
-        c.name === `welcome-${user.username.toLowerCase().replace(/[^a-z0-9]/g, "")}`
-      );
-      if (onboardingChannel) {
-        await onboardingChannel.delete().catch(() => {});
-        console.log(`🗑️ Deleted onboarding channel for ${user.tag}`);
-      }
-
-      return;
-    }
-
-    // Remove Streamer role
-    if (reaction.message.id === roleMessageId && reaction.emoji.name === "🎮") {
-      if (member.roles.cache.has(ROLE_IDS.streamer)) {
-        await member.roles.remove(ROLE_IDS.streamer);
-        console.log(`ℹ️ Removed Streamer role from ${user.tag}`);
-      }
-    }
-
-    // Remove Viewer role
-    if (reaction.message.id === roleMessageId && reaction.emoji.name === "👀") {
-      if (member.roles.cache.has(ROLE_IDS.viewer)) {
-        await member.roles.remove(ROLE_IDS.viewer);
-        console.log(`ℹ️ Removed Viewer role from ${user.tag}`);
-      }
-    }
-
-  } catch (err) {
-    console.error("❌ Reaction remove error:", err);
   }
 });
 
@@ -377,6 +281,17 @@ client.on("messageReactionRemove", async (reaction, user) => {
 async function createOnboardingChannel(guild, member) {
   try {
     const channelName = `welcome-${member.user.username.toLowerCase().replace(/[^a-z0-9]/g, "")}`;
+
+    // Prevent duplicates
+    const channels = await guild.channels.fetch();
+    const existing = channels.find(
+      c => c.parentId === onboardingCategoryId && c.name === channelName
+    );
+
+    if (existing) {
+      console.log(`ℹ️ Onboarding channel already exists for ${member.user.tag}`);
+      return;
+    }
 
     const channel = await guild.channels.create({
       name: channelName,
@@ -412,43 +327,45 @@ async function createOnboardingChannel(guild, member) {
 
     console.log(`✅ Created onboarding channel for ${member.user.tag}`);
 
-    const genderEmbed = new EmbedBuilder()
-      .setTitle(`🦕 Welcome, ${member.user.username}! You're verified!`)
+    // Step 1 — Show rules
+    const rulesEmbed = new EmbedBuilder()
+      .setTitle("📋 Server Rules")
       .setDescription(
-        "You now have full access to the server! 🎉\n\n" +
-        "Let's get you set up with your roles. First, an optional one:\n\n" +
-        "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n" +
-        "😎 **BROS** — private hangout space for the guys\n" +
-        "💅 **Gurls** — private hangout space for the girls\n" +
-        "⏭️ **Skip** — no role assigned, no questions asked\n\n" +
-        "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n" +
-        "⚠️ **This role is completely optional.**\n" +
-        "BROS & Gurls roles exist in good faith for members who enjoy hanging out in a more relaxed same-gender space. " +
-        "These unlock private hidden channels. You are under no obligation to pick one. " +
-        "Skipping will not affect your access to the server in any way.\n\n" +
-        "*This selection is completely private. Nobody else can see what you choose.*"
+        `Hey ${member}! Welcome to **DinoGang** 🦕\n\n` +
+        "Before you get access to the server please read and accept the rules below.\n\n" +
+        "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n" +
+        "**🔞 Age Requirement**\n" +
+        "This server is 18+ only. Anyone found to be under 18 will be removed immediately.\n\n" +
+        "**🤝 Respect Everyone**\n" +
+        "No harassment, bullying, hate speech, personal attacks, or threats. Friendly banter is fine — targeted harassment is not.\n\n" +
+        "**🚫 Illegal Content**\n" +
+        "No illegal material, piracy, doxxing, malware, scams, or phishing. Violations result in immediate removal.\n\n" +
+        "**🔞 Mature Content**\n" +
+        "Mature humor is allowed. No explicit pornography, non-consensual content, or illegal adult material.\n\n" +
+        "**💬 Spam & Channel Use**\n" +
+        "Keep channels on topic. No spam, flooding, or mass pinging.\n\n" +
+        "**📢 Advertising**\n" +
+        "Self promotion is allowed only in #shameless-plug. No advertising in other channels.\n\n" +
+        "**🎙️ Voice Chat**\n" +
+        "No intentional disruption, soundboard spam, or disrespecting others in voice.\n\n" +
+        "**⚠️ Moderation**\n" +
+        "Follow moderator instructions. Breaking rules may result in a warning, mute, kick, or ban.\n\n" +
+        "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n" +
+        "✔️ **We're all here to hang out, game, and have fun. Be respectful and enjoy the community.**\n\n" +
+        "*By clicking **Accept Rules** below you confirm you are 18+ and agree to follow all server rules.*"
       )
-      .setColor(0x9146FF);
+      .setColor(0x9146FF)
+      .setFooter({ text: "Step 1 of 3 — Accept Rules" });
 
-    const genderRow = new ActionRowBuilder().addComponents(
+    const rulesRow = new ActionRowBuilder().addComponents(
       new ButtonBuilder()
-        .setCustomId(`onboard_bros_${member.id}`)
-        .setLabel("BROS")
-        .setEmoji("😎")
-        .setStyle(ButtonStyle.Primary),
-      new ButtonBuilder()
-        .setCustomId(`onboard_gurls_${member.id}`)
-        .setLabel("Gurls")
-        .setEmoji("💅")
-        .setStyle(ButtonStyle.Primary),
-      new ButtonBuilder()
-        .setCustomId(`onboard_skip_gender_${member.id}`)
-        .setLabel("Skip")
-        .setEmoji("⏭️")
-        .setStyle(ButtonStyle.Secondary)
+        .setCustomId(`onboard_accept_rules_${member.id}`)
+        .setLabel("Accept Rules")
+        .setEmoji("✅")
+        .setStyle(ButtonStyle.Success)
     );
 
-    await channel.send({ content: `${member}`, embeds: [genderEmbed], components: [genderRow] });
+    await channel.send({ content: `${member}`, embeds: [rulesEmbed], components: [rulesRow] });
 
   } catch (err) {
     console.error("❌ Error creating onboarding channel:", err);
@@ -478,7 +395,7 @@ client.on("interactionCreate", async (interaction) => {
       return;
     }
 
-    // Onboarding buttons — verify the button belongs to this user
+    // Verify button belongs to this user
     const parts = customId.split("_");
     const memberId = parts[parts.length - 1];
 
@@ -487,41 +404,104 @@ client.on("interactionCreate", async (interaction) => {
       return;
     }
 
-    // BROS role
+    // Step 1 — Accept rules
+    if (customId.startsWith("onboard_accept_rules_")) {
+      await member.roles.remove(ROLE_IDS.unverified);
+      await member.roles.add(ROLE_IDS.goofyGoobers);
+      console.log(`✅ Rules accepted and verified: ${user.tag}`);
+
+      await interaction.update({
+        embeds: [
+          new EmbedBuilder()
+            .setTitle("✅ Rules Accepted!")
+            .setDescription("You're verified and have full access to the server! Now let's pick your roles.")
+            .setColor(0x57F287)
+            .setFooter({ text: "Step 1 of 3 — Complete ✅" })
+        ],
+        components: []
+      });
+
+      await sendGenderRoleSelection(interaction.channel, member);
+      return;
+    }
+
+    // Step 2 — Gender role
     if (customId.startsWith("onboard_bros_")) {
       await member.roles.add(ROLE_IDS.bros);
-      await interaction.update({ content: "✅ **BROS** 😎 role assigned!", components: [] });
+      await interaction.update({
+        embeds: [
+          new EmbedBuilder()
+            .setTitle("😎 BROS role assigned!")
+            .setDescription("Nice! One more selection...")
+            .setColor(0x9146FF)
+            .setFooter({ text: "Step 2 of 3 — Complete ✅" })
+        ],
+        components: []
+      });
       await sendContentRoleSelection(interaction.channel, member);
       return;
     }
 
-    // Gurls role
     if (customId.startsWith("onboard_gurls_")) {
       await member.roles.add(ROLE_IDS.gurls);
-      await interaction.update({ content: "✅ **Gurls** 💅 role assigned!", components: [] });
+      await interaction.update({
+        embeds: [
+          new EmbedBuilder()
+            .setTitle("💅 Gurls role assigned!")
+            .setDescription("Nice! One more selection...")
+            .setColor(0x9146FF)
+            .setFooter({ text: "Step 2 of 3 — Complete ✅" })
+        ],
+        components: []
+      });
       await sendContentRoleSelection(interaction.channel, member);
       return;
     }
 
-    // Skip gender
     if (customId.startsWith("onboard_skip_gender_")) {
-      await interaction.update({ content: "⏭️ Gender role skipped!", components: [] });
+      await interaction.update({
+        embeds: [
+          new EmbedBuilder()
+            .setTitle("⏭️ Skipped!")
+            .setDescription("No worries! One more selection...")
+            .setColor(0x9146FF)
+            .setFooter({ text: "Step 2 of 3 — Complete ✅" })
+        ],
+        components: []
+      });
       await sendContentRoleSelection(interaction.channel, member);
       return;
     }
 
-    // Streamer role
+    // Step 3 — Content role
     if (customId.startsWith("onboard_streamer_")) {
       await member.roles.add(ROLE_IDS.streamer);
-      await interaction.update({ content: "✅ **Streamer** 🎮 role assigned!", components: [] });
+      await interaction.update({
+        embeds: [
+          new EmbedBuilder()
+            .setTitle("🎮 Streamer role assigned!")
+            .setDescription("All done!")
+            .setColor(0x57F287)
+            .setFooter({ text: "Step 3 of 3 — Complete ✅" })
+        ],
+        components: []
+      });
       await finishOnboarding(interaction.channel, member);
       return;
     }
 
-    // Viewer role
     if (customId.startsWith("onboard_viewer_")) {
       await member.roles.add(ROLE_IDS.viewer);
-      await interaction.update({ content: "✅ **Viewer** 👀 role assigned!", components: [] });
+      await interaction.update({
+        embeds: [
+          new EmbedBuilder()
+            .setTitle("👀 Viewer role assigned!")
+            .setDescription("All done!")
+            .setColor(0x57F287)
+            .setFooter({ text: "Step 3 of 3 — Complete ✅" })
+        ],
+        components: []
+      });
       await finishOnboarding(interaction.channel, member);
       return;
     }
@@ -533,17 +513,61 @@ client.on("interactionCreate", async (interaction) => {
 });
 
 // ----------------------------
-// CONTENT ROLE SELECTION
+// STEP 2 — GENDER ROLE SELECTION
+// ----------------------------
+async function sendGenderRoleSelection(channel, member) {
+  const embed = new EmbedBuilder()
+    .setTitle("🎭 Optional Role")
+    .setDescription(
+      "This next role is completely optional:\n\n" +
+      "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n" +
+      "😎 **BROS** — private hangout space for the guys\n" +
+      "💅 **Gurls** — private hangout space for the girls\n" +
+      "⏭️ **Skip** — no role assigned, no questions asked\n\n" +
+      "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n" +
+      "⚠️ **This role is completely optional.**\n" +
+      "BROS & Gurls roles exist in good faith for members who enjoy hanging out in a more relaxed same-gender space. " +
+      "These unlock private hidden channels. You are under no obligation to pick one. " +
+      "Skipping will not affect your access to the server in any way.\n\n" +
+      "*This selection is completely private. Nobody else can see what you choose.*"
+    )
+    .setColor(0x9146FF)
+    .setFooter({ text: "Step 2 of 3 — Pick a role or skip" });
+
+  const row = new ActionRowBuilder().addComponents(
+    new ButtonBuilder()
+      .setCustomId(`onboard_bros_${member.id}`)
+      .setLabel("BROS")
+      .setEmoji("😎")
+      .setStyle(ButtonStyle.Primary),
+    new ButtonBuilder()
+      .setCustomId(`onboard_gurls_${member.id}`)
+      .setLabel("Gurls")
+      .setEmoji("💅")
+      .setStyle(ButtonStyle.Primary),
+    new ButtonBuilder()
+      .setCustomId(`onboard_skip_gender_${member.id}`)
+      .setLabel("Skip")
+      .setEmoji("⏭️")
+      .setStyle(ButtonStyle.Secondary)
+  );
+
+  await channel.send({ embeds: [embed], components: [row] });
+}
+
+// ----------------------------
+// STEP 3 — CONTENT ROLE SELECTION
 // ----------------------------
 async function sendContentRoleSelection(channel, member) {
   const embed = new EmbedBuilder()
-    .setTitle("🎮 One more thing!")
+    .setTitle("🎮 Content Role")
     .setDescription(
-      "Are you a streamer or a viewer?\n\n" +
+      "Last one! Are you a streamer or a viewer?\n\n" +
       "🎮 **Streamer** — You stream on Twitch\n" +
       "👀 **Viewer** — You watch streams"
     )
-    .setColor(0x9146FF);
+    .setColor(0x9146FF)
+    .setFooter({ text: "Step 3 of 3 — Pick your content role" });
 
   const row = new ActionRowBuilder().addComponents(
     new ButtonBuilder()
@@ -568,20 +592,66 @@ async function finishOnboarding(channel, member) {
   const embed = new EmbedBuilder()
     .setTitle("🦕 You're all set!")
     .setDescription(
-      "Welcome to the crew! You now have full access to the server.\n\n" +
-      "Have fun, be respectful, and enjoy the community! 🎉"
+      "Welcome to the crew! You now have full access to the server. 🎉\n\n" +
+      "This channel will self-destruct in 30 seconds. See you in there!"
     )
-    .setColor(0x57F287);
+    .setColor(0x57F287)
+    .setFooter({ text: "Onboarding complete — channel deleting in 30 seconds" });
 
   await channel.send({ embeds: [embed] });
   console.log(`✅ Onboarding complete for ${member.user.tag}`);
 
-  // Delete channel after 30 seconds
   setTimeout(async () => {
     await channel.delete().catch(() => {});
     console.log(`🗑️ Deleted onboarding channel for ${member.user.tag}`);
   }, 30000);
 }
+
+// ----------------------------
+// REACTION REMOVE — UNVERIFY
+// ----------------------------
+client.on("messageReactionRemove", async (reaction, user) => {
+  try {
+    if (user.bot) return;
+    if (reaction.partial) await reaction.fetch();
+    if (reaction.message.partial) await reaction.message.fetch();
+
+    const guild = await client.guilds.fetch(GUILD_ID);
+    const member = await guild.members.fetch(user.id);
+
+    if (reaction.message.id === rulesMessageId && reaction.emoji.name === "✅") {
+      const rolesToRemove = [
+        ROLE_IDS.goofyGoobers,
+        ROLE_IDS.streamer,
+        ROLE_IDS.viewer,
+        ROLE_IDS.bros,
+        ROLE_IDS.gurls
+      ];
+
+      for (const roleId of rolesToRemove) {
+        if (member.roles.cache.has(roleId)) {
+          await member.roles.remove(roleId).catch(() => {});
+        }
+      }
+
+      await member.roles.add(ROLE_IDS.unverified);
+      console.log(`🔒 Unverified: ${user.tag} — all roles removed`);
+
+      const channels = await guild.channels.fetch();
+      const onboardingChannel = channels.find(
+        c => c.parentId === onboardingCategoryId &&
+          c.name === `welcome-${user.username.toLowerCase().replace(/[^a-z0-9]/g, "")}`
+      );
+
+      if (onboardingChannel) {
+        await onboardingChannel.delete().catch(() => {});
+      }
+    }
+
+  } catch (err) {
+    console.error("❌ Reaction remove error:", err);
+  }
+});
 
 // ----------------------------
 // HEALTH CHECK
