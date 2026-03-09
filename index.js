@@ -353,15 +353,18 @@ app.listen(PORT, () => {
 
     // Small delay to avoid hammering Discord on rapid redeploys
     await new Promise(resolve => setTimeout(resolve, 3000));
+    console.log("Startup delay complete, attempting login...");
 
-    const timeout = setTimeout(() => {
-      console.error("❌ Discord login timeout after 30000ms");
-    }, 30000);
+    await Promise.race([
+      client.login(token).then(() => {
+        console.log("✅ Discord login resolved");
+      }),
+      new Promise((_, reject) =>
+        setTimeout(() => reject(new Error("Discord login timeout after 30000ms")), 30000)
+      )
+    ]);
 
-    const loginResult = await client.login(token);
-    clearTimeout(timeout);
-    console.log("✅ Discord login resolved");
   } catch (err) {
-    console.error("❌ Discord login failed:", err);
+    console.error("❌ Discord login failed:", err.message);
   }
 })();
