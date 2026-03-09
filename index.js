@@ -36,7 +36,6 @@ const ROLE_IDS = {
 };
 
 let rulesMessageId = null;
-let roleMessageId = null;
 let onboardingCategoryId = null;
 
 // ----------------------------
@@ -165,7 +164,6 @@ async function lockChannelsForUnverified() {
 
 // ----------------------------
 // SETUP RULES MESSAGE
-// (for existing members only)
 // ----------------------------
 async function setupRulesMessage() {
   const rulesChannel = await client.channels.fetch(RULES_CHANNEL_ID);
@@ -175,12 +173,14 @@ async function setupRulesMessage() {
   if (botMessages.size >= 1) {
     const sorted = botMessages.sort((a, b) => a.createdTimestamp - b.createdTimestamp);
     rulesMessageId = sorted.first().id;
-    if (botMessages.size >= 2) roleMessageId = sorted.last().id;
-    console.log("ℹ️ Rules messages already exist");
+    console.log("ℹ️ Rules message already exists");
     return;
   }
 
-  // Post rules embed
+  for (const msg of botMessages.values()) {
+    await msg.delete().catch(() => {});
+  }
+
   const rulesEmbed = new EmbedBuilder()
     .setTitle("📋 Server Rules")
     .setDescription(
@@ -208,34 +208,6 @@ async function setupRulesMessage() {
   const rulesMsg = await rulesChannel.send({ embeds: [rulesEmbed] });
   rulesMessageId = rulesMsg.id;
   console.log("✅ Rules message posted");
-
-  // Role picker for existing members
-  const roleEmbed = new EmbedBuilder()
-    .setTitle("🎭 Existing Members — Pick Your Roles")
-    .setDescription(
-      "Already part of the crew? Pick your content role below!\n\n" +
-      "🎮 — **Streamer** — You stream on Twitch\n" +
-      "👀 — **Viewer** — You watch streams\n\n" +
-      "*New members go through the private onboarding flow automatically when they join.*"
-    )
-    .setColor(0x9146FF);
-
-  const roleRow = new ActionRowBuilder().addComponents(
-    new ButtonBuilder()
-      .setCustomId("role_streamer")
-      .setLabel("Streamer")
-      .setEmoji("🎮")
-      .setStyle(ButtonStyle.Primary),
-    new ButtonBuilder()
-      .setCustomId("role_viewer")
-      .setLabel("Viewer")
-      .setEmoji("👀")
-      .setStyle(ButtonStyle.Secondary)
-  );
-
-  const roleMsg = await rulesChannel.send({ embeds: [roleEmbed], components: [roleRow] });
-  roleMessageId = roleMsg.id;
-  console.log("✅ Role picker message posted");
 }
 
 // ----------------------------
@@ -250,15 +222,14 @@ client.on("guildMemberAdd", async (member) => {
 
     const guild = await client.guilds.fetch(GUILD_ID);
 
-    // Post welcome in #welcome
     const welcomeChannel = await client.channels.fetch(WELCOME_CHANNEL_ID);
     const welcomeEmbed = new EmbedBuilder()
       .setTitle(`🦕 Welcome to the server, ${member.user.username}!`)
       .setDescription(
         `Hey ${member}! Welcome to the community! 🎉\n\n` +
-        "**Check your private onboarding channel to get started!**\n" +
-        "DinoBot has set up a private channel just for you where you can read the rules and pick your roles.\n\n" +
-        "We're happy to have you here!"
+        "**To get started:**\n" +
+        "Head over to your **private onboarding channel** under the ONBOARDING category — DinoBot has set it up just for you!\n\n" +
+        "Inside you'll find the server rules and everything you need to get set up. See you in there! 🦕"
       )
       .setThumbnail(member.user.displayAvatarURL({ dynamic: true }))
       .setColor(0x9146FF)
@@ -266,8 +237,6 @@ client.on("guildMemberAdd", async (member) => {
       .setTimestamp();
 
     await welcomeChannel.send({ embeds: [welcomeEmbed] });
-
-    // Immediately create private onboarding channel
     await createOnboardingChannel(guild, member);
 
   } catch (err) {
@@ -282,7 +251,6 @@ async function createOnboardingChannel(guild, member) {
   try {
     const channelName = `welcome-${member.user.username.toLowerCase().replace(/[^a-z0-9]/g, "")}`;
 
-    // Prevent duplicates
     const channels = await guild.channels.fetch();
     const existing = channels.find(
       c => c.parentId === onboardingCategoryId && c.name === channelName
@@ -327,7 +295,6 @@ async function createOnboardingChannel(guild, member) {
 
     console.log(`✅ Created onboarding channel for ${member.user.tag}`);
 
-    // Step 1 — Show rules
     const rulesEmbed = new EmbedBuilder()
       .setTitle("📋 Server Rules")
       .setDescription(
@@ -382,7 +349,7 @@ client.on("interactionCreate", async (interaction) => {
   const member = await guild.members.fetch(user.id);
 
   try {
-    // Existing member role buttons in #rules
+    // Existing member role buttons
     if (customId === "role_streamer") {
       await member.roles.add(ROLE_IDS.streamer);
       await interaction.reply({ content: "✅ You've been given the **Streamer** 🎮 role!", ephemeral: true });
@@ -408,7 +375,7 @@ client.on("interactionCreate", async (interaction) => {
     if (customId.startsWith("onboard_accept_rules_")) {
       await member.roles.remove(ROLE_IDS.unverified);
       await member.roles.add(ROLE_IDS.goofyGoobers);
-      console.log(`✅ Rules accepted and verified: ${user.tag}`);
+      console.log(`✅ Rules accepted: ${user.tag}`);
 
       await interaction.update({
         embeds: [
@@ -606,52 +573,6 @@ async function finishOnboarding(channel, member) {
     console.log(`🗑️ Deleted onboarding channel for ${member.user.tag}`);
   }, 30000);
 }
-
-// ----------------------------
-// REACTION REMOVE — UNVERIFY
-// ----------------------------
-client.on("messageReactionRemove", async (reaction, user) => {
-  try {
-    if (user.bot) return;
-    if (reaction.partial) await reaction.fetch();
-    if (reaction.message.partial) await reaction.message.fetch();
-
-    const guild = await client.guilds.fetch(GUILD_ID);
-    const member = await guild.members.fetch(user.id);
-
-    if (reaction.message.id === rulesMessageId && reaction.emoji.name === "✅") {
-      const rolesToRemove = [
-        ROLE_IDS.goofyGoobers,
-        ROLE_IDS.streamer,
-        ROLE_IDS.viewer,
-        ROLE_IDS.bros,
-        ROLE_IDS.gurls
-      ];
-
-      for (const roleId of rolesToRemove) {
-        if (member.roles.cache.has(roleId)) {
-          await member.roles.remove(roleId).catch(() => {});
-        }
-      }
-
-      await member.roles.add(ROLE_IDS.unverified);
-      console.log(`🔒 Unverified: ${user.tag} — all roles removed`);
-
-      const channels = await guild.channels.fetch();
-      const onboardingChannel = channels.find(
-        c => c.parentId === onboardingCategoryId &&
-          c.name === `welcome-${user.username.toLowerCase().replace(/[^a-z0-9]/g, "")}`
-      );
-
-      if (onboardingChannel) {
-        await onboardingChannel.delete().catch(() => {});
-      }
-    }
-
-  } catch (err) {
-    console.error("❌ Reaction remove error:", err);
-  }
-});
 
 // ----------------------------
 // HEALTH CHECK
