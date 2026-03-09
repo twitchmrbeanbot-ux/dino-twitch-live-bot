@@ -23,18 +23,18 @@ const GUILD_ID = "1480080172400250992";
 const WELCOME_CHANNEL_ID = "1480080173469532194";
 const RULES_CHANNEL_ID = "1480080173469532195";
 
-// Role IDs
 const ROLE_IDS = {
   unverified: "1480647122285236438",
   goofyGoobers: "1480088633540083732",
   streamer: "1480647124038455498",
   viewer: "1480647124529189128",
+  bros: "1480674153722937354",
+  gurls: "1480674490231816403",
   mods: "1480282547769573538",
   admin: "1480083446704509091",
   owner: "1480082698159525909"
 };
 
-// Store message IDs
 let rulesMessageId = null;
 let roleMessageId = null;
 let onboardingCategoryId = null;
@@ -78,6 +78,7 @@ client.once("clientReady", async () => {
   try {
     await setupOnboardingCategory();
     await setupRulesMessage();
+    await lockChannelsForUnverified();
     console.log("✅ Onboarding system ready");
   } catch (err) {
     console.error("❌ Onboarding setup error:", err);
@@ -102,7 +103,6 @@ client.on("invalidated", () => console.error("❌ Discord session invalidated"))
 async function setupOnboardingCategory() {
   const guild = await client.guilds.fetch(GUILD_ID);
   const channels = await guild.channels.fetch();
-
   const existing = channels.find(c => c.type === ChannelType.GuildCategory && c.name === "ONBOARDING");
 
   if (existing) {
@@ -127,6 +127,45 @@ async function setupOnboardingCategory() {
 }
 
 // ----------------------------
+// LOCK CHANNELS FOR UNVERIFIED
+// ----------------------------
+async function lockChannelsForUnverified() {
+  const guild = await client.guilds.fetch(GUILD_ID);
+  const channels = await guild.channels.fetch();
+
+  for (const channel of channels.values()) {
+    if (!channel) continue;
+
+    // Skip ONBOARDING category and its children
+    if (channel.id === onboardingCategoryId) continue;
+    if (channel.parentId === onboardingCategoryId) continue;
+
+    // Allow Unverified to see #welcome and #rules only
+    if (channel.id === WELCOME_CHANNEL_ID || channel.id === RULES_CHANNEL_ID) {
+      await channel.permissionOverwrites.edit(ROLE_IDS.unverified, {
+        ViewChannel: true,
+        SendMessages: false,
+        AddReactions: true,
+        ReadMessageHistory: true
+      }).catch(() => {});
+      continue;
+    }
+
+    // Deny everything else
+    if (channel.type === ChannelType.GuildCategory ||
+        channel.type === ChannelType.GuildText ||
+        channel.type === ChannelType.GuildVoice ||
+        channel.type === ChannelType.GuildAnnouncement) {
+      await channel.permissionOverwrites.edit(ROLE_IDS.unverified, {
+        ViewChannel: false
+      }).catch(() => {});
+    }
+  }
+
+  console.log("✅ Channel lockdown applied for Unverified role");
+}
+
+// ----------------------------
 // SETUP RULES MESSAGE
 // ----------------------------
 async function setupRulesMessage() {
@@ -142,12 +181,10 @@ async function setupRulesMessage() {
     return;
   }
 
-  // Clear old bot messages
   for (const msg of botMessages.values()) {
     await msg.delete().catch(() => {});
   }
 
-  // Post rules embed
   const rulesEmbed = new EmbedBuilder()
     .setTitle("📋 Server Rules")
     .setDescription(
@@ -178,7 +215,6 @@ async function setupRulesMessage() {
   rulesMessageId = rulesMsg.id;
   console.log("✅ Rules message posted");
 
-  // Post role picker for existing members
   const roleEmbed = new EmbedBuilder()
     .setTitle("🎭 Existing Members — Pick Your Roles")
     .setDescription(
@@ -214,14 +250,12 @@ client.on("guildMemberAdd", async (member) => {
   try {
     console.log(`👋 New member joined: ${member.user.tag}`);
 
-    const guild = await client.guilds.fetch(GUILD_ID);
-
-    // Assign Unverified role
     await member.roles.add(ROLE_IDS.unverified);
     console.log(`✅ Assigned Unverified role to ${member.user.tag}`);
 
-    // Post welcome message in #welcome
+    const guild = await client.guilds.fetch(GUILD_ID);
     const welcomeChannel = await client.channels.fetch(WELCOME_CHANNEL_ID);
+
     const welcomeEmbed = new EmbedBuilder()
       .setTitle(`🦕 Welcome to the server, ${member.user.username}!`)
       .setDescription(
@@ -245,36 +279,95 @@ client.on("guildMemberAdd", async (member) => {
 });
 
 // ----------------------------
-// REACTION HANDLER — VERIFY
+// REACTION ADD — VERIFY
 // ----------------------------
 client.on("messageReactionAdd", async (reaction, user) => {
   try {
     if (user.bot) return;
-
     if (reaction.partial) await reaction.fetch();
     if (reaction.message.partial) await reaction.message.fetch();
 
-    if (
-      reaction.message.id === rulesMessageId &&
-      reaction.emoji.name === "✅"
-    ) {
+    if (reaction.message.id === rulesMessageId && reaction.emoji.name === "✅") {
       const guild = await client.guilds.fetch(GUILD_ID);
       const member = await guild.members.fetch(user.id);
 
-      // Only process if they have Unverified role
       if (!member.roles.cache.has(ROLE_IDS.unverified)) return;
 
-      // Remove Unverified, assign Goofy Goobers
       await member.roles.remove(ROLE_IDS.unverified);
       await member.roles.add(ROLE_IDS.goofyGoobers);
       console.log(`✅ Verified: ${user.tag}`);
 
-      // Create private onboarding channel
       await createOnboardingChannel(guild, member);
     }
 
   } catch (err) {
-    console.error("❌ Reaction handler error:", err);
+    console.error("❌ Reaction add error:", err);
+  }
+});
+
+// ----------------------------
+// REACTION REMOVE — UNVERIFY
+// ----------------------------
+client.on("messageReactionRemove", async (reaction, user) => {
+  try {
+    if (user.bot) return;
+    if (reaction.partial) await reaction.fetch();
+    if (reaction.message.partial) await reaction.message.fetch();
+
+    const guild = await client.guilds.fetch(GUILD_ID);
+    const member = await guild.members.fetch(user.id);
+
+    // Un-verify — remove all assigned roles and re-lock
+    if (reaction.message.id === rulesMessageId && reaction.emoji.name === "✅") {
+      const rolesToRemove = [
+        ROLE_IDS.goofyGoobers,
+        ROLE_IDS.streamer,
+        ROLE_IDS.viewer,
+        ROLE_IDS.bros,
+        ROLE_IDS.gurls
+      ];
+
+      for (const roleId of rolesToRemove) {
+        if (member.roles.cache.has(roleId)) {
+          await member.roles.remove(roleId).catch(() => {});
+        }
+      }
+
+      await member.roles.add(ROLE_IDS.unverified);
+      console.log(`🔒 Unverified: ${user.tag} — all roles removed`);
+
+      // Delete their onboarding channel if it still exists
+      const channels = await guild.channels.fetch();
+      const onboardingChannel = channels.find(
+        c => c.parentId === onboardingCategoryId &&
+        c.name === `welcome-${user.username.toLowerCase().replace(/[^a-z0-9]/g, "")}`
+      );
+      if (onboardingChannel) {
+        await onboardingChannel.delete().catch(() => {});
+        console.log(`🗑️ Deleted onboarding channel for ${user.tag}`);
+      }
+
+      return;
+    }
+
+    // Remove Streamer role
+    if (reaction.message.id === roleMessageId && reaction.emoji.name === "🎮") {
+      if (member.roles.cache.has(ROLE_IDS.streamer)) {
+        await member.roles.remove(ROLE_IDS.streamer);
+        console.log(`ℹ️ Removed Streamer role from ${user.tag}`);
+      }
+    }
+
+    // Remove Viewer role
+    if (reaction.message.id === roleMessageId && reaction.emoji.name === "👀") {
+      if (member.roles.cache.has(ROLE_IDS.viewer)) {
+        await member.roles.remove(ROLE_IDS.viewer);
+        console.log(`ℹ️ Removed Viewer role from ${user.tag}`);
+      }
+    }
+
+  } catch (err) {
+    console.error("❌ Reaction remove error:", err);
   }
 });
 
@@ -319,19 +412,18 @@ async function createOnboardingChannel(guild, member) {
 
     console.log(`✅ Created onboarding channel for ${member.user.tag}`);
 
-    // Post gender role selection
     const genderEmbed = new EmbedBuilder()
       .setTitle(`🦕 Welcome, ${member.user.username}! You're verified!`)
       .setDescription(
         "You now have full access to the server! 🎉\n\n" +
         "Let's get you set up with your roles. First, an optional one:\n\n" +
         "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n" +
-        "😎 **Bro** — private hangout space for the guys\n" +
-        "💅 **Gurl** — private hangout space for the girls\n" +
+        "😎 **BROS** — private hangout space for the guys\n" +
+        "💅 **Gurls** — private hangout space for the girls\n" +
         "⏭️ **Skip** — no role assigned, no questions asked\n\n" +
         "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n" +
         "⚠️ **This role is completely optional.**\n" +
-        "Bro & Gurl roles exist in good faith for members who enjoy hanging out in a more relaxed same-gender space. " +
+        "BROS & Gurls roles exist in good faith for members who enjoy hanging out in a more relaxed same-gender space. " +
         "These unlock private hidden channels. You are under no obligation to pick one. " +
         "Skipping will not affect your access to the server in any way.\n\n" +
         "*This selection is completely private. Nobody else can see what you choose.*"
@@ -340,13 +432,13 @@ async function createOnboardingChannel(guild, member) {
 
     const genderRow = new ActionRowBuilder().addComponents(
       new ButtonBuilder()
-        .setCustomId(`onboard_bro_${member.id}`)
-        .setLabel("Bro")
+        .setCustomId(`onboard_bros_${member.id}`)
+        .setLabel("BROS")
         .setEmoji("😎")
         .setStyle(ButtonStyle.Primary),
       new ButtonBuilder()
-        .setCustomId(`onboard_gurl_${member.id}`)
-        .setLabel("Gurl")
+        .setCustomId(`onboard_gurls_${member.id}`)
+        .setLabel("Gurls")
         .setEmoji("💅")
         .setStyle(ButtonStyle.Primary),
       new ButtonBuilder()
@@ -373,7 +465,7 @@ client.on("interactionCreate", async (interaction) => {
   const member = await guild.members.fetch(user.id);
 
   try {
-    // --- EXISTING MEMBER ROLE BUTTONS (in #rules) ---
+    // Existing member role buttons in #rules
     if (customId === "role_streamer") {
       await member.roles.add(ROLE_IDS.streamer);
       await interaction.reply({ content: "✅ You've been given the **Streamer** 🎮 role!", ephemeral: true });
@@ -386,35 +478,39 @@ client.on("interactionCreate", async (interaction) => {
       return;
     }
 
-    // --- ONBOARDING BUTTONS ---
-    const memberId = customId.split("_").pop();
+    // Onboarding buttons — verify the button belongs to this user
+    const parts = customId.split("_");
+    const memberId = parts[parts.length - 1];
+
     if (memberId !== user.id) {
       await interaction.reply({ content: "❌ These buttons are not for you!", ephemeral: true });
       return;
     }
 
-    // Gender selection
-    if (customId.startsWith("onboard_bro_")) {
-      await member.roles.add(ROLE_IDS.bro).catch(() => {});
-      await interaction.update({ content: "✅ **Bro** role assigned!", components: [] });
+    // BROS role
+    if (customId.startsWith("onboard_bros_")) {
+      await member.roles.add(ROLE_IDS.bros);
+      await interaction.update({ content: "✅ **BROS** 😎 role assigned!", components: [] });
       await sendContentRoleSelection(interaction.channel, member);
       return;
     }
 
-    if (customId.startsWith("onboard_gurl_")) {
-      await member.roles.add(ROLE_IDS.gurl).catch(() => {});
-      await interaction.update({ content: "✅ **Gurl** role assigned!", components: [] });
+    // Gurls role
+    if (customId.startsWith("onboard_gurls_")) {
+      await member.roles.add(ROLE_IDS.gurls);
+      await interaction.update({ content: "✅ **Gurls** 💅 role assigned!", components: [] });
       await sendContentRoleSelection(interaction.channel, member);
       return;
     }
 
+    // Skip gender
     if (customId.startsWith("onboard_skip_gender_")) {
       await interaction.update({ content: "⏭️ Gender role skipped!", components: [] });
       await sendContentRoleSelection(interaction.channel, member);
       return;
     }
 
-    // Content role selection
+    // Streamer role
     if (customId.startsWith("onboard_streamer_")) {
       await member.roles.add(ROLE_IDS.streamer);
       await interaction.update({ content: "✅ **Streamer** 🎮 role assigned!", components: [] });
@@ -422,6 +518,7 @@ client.on("interactionCreate", async (interaction) => {
       return;
     }
 
+    // Viewer role
     if (customId.startsWith("onboard_viewer_")) {
       await member.roles.add(ROLE_IDS.viewer);
       await interaction.update({ content: "✅ **Viewer** 👀 role assigned!", components: [] });
@@ -431,7 +528,7 @@ client.on("interactionCreate", async (interaction) => {
 
   } catch (err) {
     console.error("❌ Button interaction error:", err);
-    await interaction.reply({ content: "❌ Something went wrong. Please contact a mod.", ephemeral: true });
+    await interaction.reply({ content: "❌ Something went wrong. Please contact a mod.", ephemeral: true }).catch(() => {});
   }
 });
 
@@ -477,7 +574,6 @@ async function finishOnboarding(channel, member) {
     .setColor(0x57F287);
 
   await channel.send({ embeds: [embed] });
-
   console.log(`✅ Onboarding complete for ${member.user.tag}`);
 
   // Delete channel after 30 seconds
@@ -507,7 +603,6 @@ async function getTwitchToken() {
       grant_type: "client_credentials"
     })
   });
-
   const data = await res.json();
   if (!data.access_token) throw new Error(`Twitch OAuth failure: ${JSON.stringify(data)}`);
   return data.access_token;
@@ -521,7 +616,6 @@ async function getTwitchUserIds(token, logins) {
       "Authorization": `Bearer ${token}`
     }
   });
-
   const data = await res.json();
   if (!res.ok) throw new Error(`Failed to get Twitch users: ${JSON.stringify(data)}`);
   return data.data || [];
@@ -546,7 +640,6 @@ async function createEventSubSubscription(token, userId) {
       }
     })
   });
-
   const data = await res.json();
   return { ok: res.ok, status: res.status, data };
 }
@@ -558,7 +651,6 @@ async function getStreamInfo(token, userId) {
       "Authorization": `Bearer ${token}`
     }
   });
-
   const data = await res.json();
   if (!res.ok) throw new Error(`Failed to get stream info: ${JSON.stringify(data)}`);
   return data.data[0] || null;
@@ -631,7 +723,6 @@ app.post("/twitch/eventsub", async (req, res) => {
 
     if (messageType === "notification" && req.body.subscription?.type === "stream.online") {
       const { broadcaster_user_id, broadcaster_user_login, broadcaster_user_name } = req.body.event;
-
       console.log(`📡 ${broadcaster_user_name} went live`);
 
       const token = await getTwitchToken();
