@@ -358,7 +358,8 @@ async function validateDiscordToken(token) {
   console.log("Discord REST status:", res.status);
   console.log("Discord REST body:", text);
 
-  return res.ok;
+  // 429 = rate limited but token is still valid, allow login to proceed
+  return res.ok || res.status === 429;
 }
 
 (async () => {
