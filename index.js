@@ -343,53 +343,24 @@ app.listen(PORT, () => {
 });
 
 // ----------------------------
-// DISCORD TOKEN VALIDATION + LOGIN
+// DISCORD LOGIN
 // ----------------------------
-async function validateDiscordToken(token) {
-  console.log("Validating Discord token via REST...");
-
-  const res = await fetch("https://discord.com/api/v10/users/@me", {
-    headers: { Authorization: `Bot ${token}` }
-  });
-
-  const text = await res.text();
-  console.log("Discord REST status:", res.status);
-  console.log("Discord REST body:", text);
-
-  if (res.status === 429) {
-    const retryAfter = res.headers.get("Retry-After") || 60;
-    console.warn(`⚠️ Rate limited. Retry-After: ${retryAfter}s. Token is valid, proceeding...`);
-    return true;
-  }
-
-  return res.ok;
-}
-
 (async () => {
   try {
     console.log("ABOUT TO CALL DISCORD LOGIN");
-
     const token = (process.env.DISCORD_TOKEN || "").trim();
     console.log("Discord token length:", token.length);
 
     // Small delay to avoid hammering Discord on rapid redeploys
     await new Promise(resolve => setTimeout(resolve, 3000));
 
-    const valid = await validateDiscordToken(token);
-    console.log("Discord token valid:", valid);
-
-    if (!valid) {
-      throw new Error("❌ Discord token failed REST validation");
-    }
-
     const timeout = setTimeout(() => {
-      console.error("❌ Discord login timeout after 30000ms — gateway may be blocked on Render");
+      console.error("❌ Discord login timeout after 30000ms");
     }, 30000);
 
     const loginResult = await client.login(token);
     clearTimeout(timeout);
-
-    console.log("Discord login promise resolved:", !!loginResult);
+    console.log("✅ Discord login resolved");
   } catch (err) {
     console.error("❌ Discord login failed:", err);
   }
