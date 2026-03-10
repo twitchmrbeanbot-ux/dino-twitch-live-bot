@@ -40,6 +40,12 @@ let onboardingCategoryId = null;
 let pickRolesChannelId = null;
 let notificationChannelId = null;
 let botInfoChannelId = null;
+let supportChannelId = null;
+let modTicketsChannelId = null;
+let staffCategoryId = null;
+let ticketsCategoryId = null;
+
+const openTickets = new Map(); // userId -> channelId
 
 process.on("unhandledRejection", (reason) => console.error("❌ UNHANDLED REJECTION:", reason));
 process.on("uncaughtException", (err) => console.error("❌ UNCAUGHT EXCEPTION:", err));
@@ -66,10 +72,14 @@ client.once("clientReady", async () => {
     await setupPickRolesChannel();
     await setupNotificationChannel();
     await setupBotInfoChannel();
+    await setupStaffCategory();
+    await setupTicketsCategory();
+    await setupSupportChannel();
+    await setupModTicketsChannel();
     await lockChannelsForUnverified();
-    console.log("✅ Onboarding system ready");
+    console.log("✅ All systems ready");
   } catch (err) {
-    console.error("❌ Onboarding setup error:", err);
+    console.error("❌ Setup error:", err);
   }
   try {
     await subscribeToTwitchUsers();
@@ -106,6 +116,172 @@ async function setupOnboardingCategory() {
 
   onboardingCategoryId = category.id;
   console.log("✅ Onboarding category created");
+}
+
+// ----------------------------
+// SETUP STAFF ONLY CATEGORY
+// ----------------------------
+async function setupStaffCategory() {
+  const guild = await client.guilds.fetch(GUILD_ID);
+  const channels = await guild.channels.fetch();
+  const existing = channels.find(c => c.type === ChannelType.GuildCategory && c.name === "STAFF ONLY");
+
+  if (existing) {
+    staffCategoryId = existing.id;
+    console.log("ℹ️ Staff Only category already exists");
+    return;
+  }
+
+  const category = await guild.channels.create({
+    name: "STAFF ONLY",
+    type: ChannelType.GuildCategory,
+    permissionOverwrites: [
+      { id: guild.roles.everyone.id, deny: [PermissionFlagsBits.ViewChannel] },
+      { id: ROLE_IDS.mods, allow: [PermissionFlagsBits.ViewChannel, PermissionFlagsBits.SendMessages, PermissionFlagsBits.ReadMessageHistory, PermissionFlagsBits.EmbedLinks] },
+      { id: ROLE_IDS.admin, allow: [PermissionFlagsBits.ViewChannel, PermissionFlagsBits.SendMessages, PermissionFlagsBits.ReadMessageHistory, PermissionFlagsBits.EmbedLinks] },
+      { id: ROLE_IDS.owner, allow: [PermissionFlagsBits.ViewChannel, PermissionFlagsBits.SendMessages, PermissionFlagsBits.ReadMessageHistory, PermissionFlagsBits.EmbedLinks] }
+    ]
+  });
+
+  staffCategoryId = category.id;
+  console.log("✅ Staff Only category created");
+}
+
+// ----------------------------
+// SETUP TICKETS CATEGORY
+// ----------------------------
+async function setupTicketsCategory() {
+  const guild = await client.guilds.fetch(GUILD_ID);
+  const channels = await guild.channels.fetch();
+  const existing = channels.find(c => c.type === ChannelType.GuildCategory && c.name === "TICKETS");
+
+  if (existing) {
+    ticketsCategoryId = existing.id;
+    console.log("ℹ️ Tickets category already exists");
+    return;
+  }
+
+  const category = await guild.channels.create({
+    name: "TICKETS",
+    type: ChannelType.GuildCategory,
+    permissionOverwrites: [
+      { id: guild.roles.everyone.id, deny: [PermissionFlagsBits.ViewChannel] }
+    ]
+  });
+
+  ticketsCategoryId = category.id;
+  console.log("✅ Tickets category created");
+}
+
+// ----------------------------
+// SETUP SUPPORT CHANNEL
+// ----------------------------
+async function setupSupportChannel() {
+  const guild = await client.guilds.fetch(GUILD_ID);
+  const channels = await guild.channels.fetch();
+
+  const existing = channels.find(
+    c => c.parentId === INFO_CATEGORY_ID && c.name === "🎟️support"
+  );
+
+  if (existing) {
+    supportChannelId = existing.id;
+    console.log("ℹ️ Support channel already exists");
+    const messages = await existing.messages.fetch({ limit: 5 });
+    const botMsg = messages.find(m => m.author.id === client.user.id && m.embeds.length > 0);
+    if (botMsg) return;
+    await postSupportMessage(existing);
+    return;
+  }
+
+  const channel = await guild.channels.create({
+    name: "🎟️support",
+    type: ChannelType.GuildText,
+    parent: INFO_CATEGORY_ID,
+    permissionOverwrites: [
+      { id: guild.roles.everyone.id, deny: [PermissionFlagsBits.ViewChannel] },
+      { id: ROLE_IDS.unverified, deny: [PermissionFlagsBits.ViewChannel] },
+      {
+        id: ROLE_IDS.goofyGoobers,
+        allow: [PermissionFlagsBits.ViewChannel, PermissionFlagsBits.ReadMessageHistory],
+        deny: [PermissionFlagsBits.SendMessages]
+      }
+    ]
+  });
+
+  supportChannelId = channel.id;
+  console.log("✅ Support channel created");
+  await postSupportMessage(channel);
+}
+
+// ----------------------------
+// POST SUPPORT MESSAGE
+// ----------------------------
+async function postSupportMessage(channel) {
+  const embed = new EmbedBuilder()
+    .setTitle("🎟️ Support & Tickets")
+    .setDescription(
+      "Need help or want to reach the mods? Use the buttons below to open a ticket.\n\n" +
+      "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n" +
+      "🚨 **Report a User** — report a member for breaking rules *(anonymous)*\n\n" +
+      "💬 **General Feedback** — share general feedback about the server\n\n" +
+      "💡 **Server Suggestion** — suggest a new feature or change\n\n" +
+      "❓ **Question for Mods** — ask the mod team something privately\n\n" +
+      "⚖️ **Appeal a Ban** — appeal a ban or punishment\n\n" +
+      "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n" +
+      "⚠️ **You can only have one open ticket at a time.**\n" +
+      "Please be patient — mods will respond as soon as possible.\n\n" +
+      "*All tickets are private between you and the mod team.*"
+    )
+    .setColor(0x9146FF)
+    .setFooter({ text: "DinoBot • Support System" });
+
+  const row1 = new ActionRowBuilder().addComponents(
+    new ButtonBuilder().setCustomId("ticket_report").setLabel("Report a User").setEmoji("🚨").setStyle(ButtonStyle.Danger),
+    new ButtonBuilder().setCustomId("ticket_feedback").setLabel("General Feedback").setEmoji("💬").setStyle(ButtonStyle.Primary),
+    new ButtonBuilder().setCustomId("ticket_suggestion").setLabel("Server Suggestion").setEmoji("💡").setStyle(ButtonStyle.Primary)
+  );
+
+  const row2 = new ActionRowBuilder().addComponents(
+    new ButtonBuilder().setCustomId("ticket_question").setLabel("Question for Mods").setEmoji("❓").setStyle(ButtonStyle.Secondary),
+    new ButtonBuilder().setCustomId("ticket_appeal").setLabel("Appeal a Ban").setEmoji("⚖️").setStyle(ButtonStyle.Secondary)
+  );
+
+  await channel.send({ embeds: [embed], components: [row1, row2] });
+  console.log("✅ Support message posted");
+}
+
+// ----------------------------
+// SETUP MOD TICKETS CHANNEL
+// ----------------------------
+async function setupModTicketsChannel() {
+  const guild = await client.guilds.fetch(GUILD_ID);
+  const channels = await guild.channels.fetch();
+
+  const existing = channels.find(
+    c => c.parentId === staffCategoryId && c.name === "🔒mod-tickets"
+  );
+
+  if (existing) {
+    modTicketsChannelId = existing.id;
+    console.log("ℹ️ Mod tickets channel already exists");
+    return;
+  }
+
+  const channel = await guild.channels.create({
+    name: "🔒mod-tickets",
+    type: ChannelType.GuildText,
+    parent: staffCategoryId,
+    permissionOverwrites: [
+      { id: guild.roles.everyone.id, deny: [PermissionFlagsBits.ViewChannel] },
+      { id: ROLE_IDS.mods, allow: [PermissionFlagsBits.ViewChannel, PermissionFlagsBits.SendMessages, PermissionFlagsBits.ReadMessageHistory, PermissionFlagsBits.EmbedLinks] },
+      { id: ROLE_IDS.admin, allow: [PermissionFlagsBits.ViewChannel, PermissionFlagsBits.SendMessages, PermissionFlagsBits.ReadMessageHistory, PermissionFlagsBits.EmbedLinks] },
+      { id: ROLE_IDS.owner, allow: [PermissionFlagsBits.ViewChannel, PermissionFlagsBits.SendMessages, PermissionFlagsBits.ReadMessageHistory, PermissionFlagsBits.EmbedLinks] }
+    ]
+  });
+
+  modTicketsChannelId = channel.id;
+  console.log("✅ Mod tickets channel created");
 }
 
 // ----------------------------
@@ -270,8 +446,7 @@ async function setupBotInfoChannel() {
     console.log("ℹ️ Bot info channel already exists");
     const messages = await existing.messages.fetch({ limit: 5 });
     const botMsg = messages.find(m => m.author.id === client.user.id && m.embeds.length > 0);
-    if (botMsg) return;
-    await postBotInfoMessage(existing);
+    if (!botMsg) await postBotInfoMessage(existing);
     return;
   }
 
@@ -308,30 +483,43 @@ async function postBotInfoMessage(channel) {
       "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n" +
 
       "**⚙️ What DinoBot Does**\n\n" +
-      "🔴 **Twitch Live Alerts** — automatically posts an alert in the stream channel whenever a DinoGang member goes live on Twitch\n\n" +
+      "🔴 **Twitch Live Alerts** — automatically posts an alert whenever a DinoGang member goes live on Twitch\n\n" +
       "👋 **Member Onboarding** — when you join, DinoBot creates a private channel just for you to get set up with rules and roles\n\n" +
-      "🎭 **Role Management** — members can self-assign interest, content, and notification roles at any time\n\n" +
+      "🎭 **Role Management** — self-assign interest, content, and notification roles at any time\n\n" +
       "🔔 **Notification Controls** — opt in or out of stream alerts and announcements pings whenever you want\n\n" +
-      "🔒 **Channel Lockdown** — new unverified members can only see #welcome and #rules until they complete onboarding\n\n" +
+      "🔒 **Channel Lockdown** — new members can only see #welcome and #rules until onboarding is complete\n\n" +
+      "🎟️ **Ticket System** — submit private tickets to the mod team for reports, feedback, suggestions, and more\n\n" +
 
       "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n" +
 
-      "**🗺️ Server Features Overview**\n\n" +
-      "📋 **#rules** — server rules, read-only\n" +
-      "🎭 **#🎭pick-your-roles** — assign or toggle your Gamers, Creative, Streamer, and Viewer roles anytime\n" +
-      "🔔 **#🔔notification-settings** — opt in or out of Stream Alerts and Announcements pings\n" +
-      "🎮 **Gamers** — private channel space for gamers (requires Gamers role)\n" +
-      "🎨 **Creative** — private channel space for creative types (requires Creative role)\n\n" +
+      "**🗺️ Server Features**\n\n" +
+      "📋 `#rules` — server rules, read-only\n" +
+      "🎭 `#🎭pick-your-roles` — toggle your Gamers, Creative, Streamer, and Viewer roles\n" +
+      "🔔 `#🔔notification-settings` — opt in or out of Stream Alerts and Announcements\n" +
+      "🎟️ `#🎟️support` — open a private ticket with the mod team\n" +
+      "🎮 `Gamers` — private space for gamers *(requires Gamers role)*\n" +
+      "🎨 `Creative` — private space for creative types *(requires Creative role)*\n\n" +
 
       "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n" +
 
       "**👋 How Onboarding Works**\n\n" +
-      "When you first join the server:\n\n" +
+      "When you first join the server DinoBot creates a private channel just for you:\n\n" +
       "**Step 1** ✅ — Read and accept the server rules\n" +
-      "**Step 2** 🎭 — Pick an optional interest space (Gamers or Creative) or skip\n" +
-      "**Step 3** 🎮 — Pick your content role (Streamer or Viewer)\n" +
-      "**Step 4** 🔔 — Set your notification preferences (Stream Alerts, Announcements, or skip)\n\n" +
-      "Once complete your private onboarding channel self-destructs and you have full access to the server! 🎉\n\n" +
+      "**Step 2** 🎭 — Pick an optional interest space *(Gamers, Creative, or skip)*\n" +
+      "**Step 3** 🎙️ — Pick your content role *(Streamer or Viewer)*\n" +
+      "**Step 4** 🔔 — Set your notification preferences *(or skip)*\n\n" +
+      "Once complete your private onboarding channel self-destructs and you have full server access! 🎉\n\n" +
+
+      "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n" +
+
+      "**🎟️ How the Ticket System Works**\n\n" +
+      "Head to `#🎟️support` and click a button to open a ticket:\n\n" +
+      "🚨 **Report a User** — report rule-breaking *(fully anonymous)*\n" +
+      "💬 **General Feedback** — share feedback about the server\n" +
+      "💡 **Server Suggestion** — suggest a new feature or change\n" +
+      "❓ **Question for Mods** — ask the mod team something privately\n" +
+      "⚖️ **Appeal a Ban** — appeal a ban or punishment\n\n" +
+      "⚠️ You can only have **one open ticket at a time**. Once it's resolved you can open another.\n\n" +
 
       "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n" +
 
@@ -339,7 +527,7 @@ async function postBotInfoMessage(channel) {
       "*Slash commands coming soon!*\n\n" +
 
       "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n" +
-      "*DinoBot is a custom bot built for DinoGang 🦕*"
+      "*DinoBot is a custom bot built for DinoGang* 🦕"
     )
     .setColor(0x9146FF)
     .setFooter({ text: "DinoBot • Server Guide" });
@@ -359,6 +547,10 @@ async function lockChannelsForUnverified() {
     if (!channel) continue;
     if (channel.id === onboardingCategoryId) continue;
     if (channel.parentId === onboardingCategoryId) continue;
+    if (channel.id === staffCategoryId) continue;
+    if (channel.parentId === staffCategoryId) continue;
+    if (channel.id === ticketsCategoryId) continue;
+    if (channel.parentId === ticketsCategoryId) continue;
 
     if (channel.id === WELCOME_CHANNEL_ID || channel.id === RULES_CHANNEL_ID) {
       await channel.permissionOverwrites.edit(ROLE_IDS.unverified, {
@@ -530,6 +722,87 @@ async function createOnboardingChannel(guild, member) {
 }
 
 // ----------------------------
+// CREATE TICKET CHANNEL
+// ----------------------------
+async function createTicketChannel(guild, member, ticketType, anonymous) {
+  const safeName = member.user.username.toLowerCase().replace(/[^a-z0-9]/g, "");
+  const channelName = `ticket-${safeName}`;
+
+  const channels = await guild.channels.fetch();
+  const existing = channels.find(c => c.parentId === ticketsCategoryId && c.name === channelName);
+
+  if (existing) return null; // already has open ticket
+
+  const permOverwrites = [
+    { id: guild.roles.everyone.id, deny: [PermissionFlagsBits.ViewChannel] },
+    { id: ROLE_IDS.mods, allow: [PermissionFlagsBits.ViewChannel, PermissionFlagsBits.SendMessages, PermissionFlagsBits.ReadMessageHistory, PermissionFlagsBits.EmbedLinks] },
+    { id: ROLE_IDS.admin, allow: [PermissionFlagsBits.ViewChannel, PermissionFlagsBits.SendMessages, PermissionFlagsBits.ReadMessageHistory, PermissionFlagsBits.EmbedLinks] },
+    { id: ROLE_IDS.owner, allow: [PermissionFlagsBits.ViewChannel, PermissionFlagsBits.SendMessages, PermissionFlagsBits.ReadMessageHistory, PermissionFlagsBits.EmbedLinks] }
+  ];
+
+  if (!anonymous) {
+    permOverwrites.push({
+      id: member.id,
+      allow: [PermissionFlagsBits.ViewChannel, PermissionFlagsBits.SendMessages, PermissionFlagsBits.ReadMessageHistory]
+    });
+  }
+
+  const channel = await guild.channels.create({
+    name: channelName,
+    type: ChannelType.GuildText,
+    parent: ticketsCategoryId,
+    permissionOverwrites
+  });
+
+  openTickets.set(member.id, channel.id);
+
+  const typeLabels = {
+    report: "🚨 Report a User",
+    feedback: "💬 General Feedback",
+    suggestion: "💡 Server Suggestion",
+    question: "❓ Question for Mods",
+    appeal: "⚖️ Appeal a Ban"
+  };
+
+  const embed = new EmbedBuilder()
+    .setTitle(`🎟️ ${typeLabels[ticketType]}`)
+    .setDescription(
+      (anonymous
+        ? "🔒 **This ticket is anonymous.** The mod team cannot see who submitted it.\n\n"
+        : `👤 **Submitted by:** ${member}\n\n`) +
+      "Please describe your issue in as much detail as possible. The mod team will respond shortly.\n\n" +
+      "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n" +
+      "*Use the buttons below to close this ticket when resolved.*"
+    )
+    .setColor(0x9146FF)
+    .setTimestamp()
+    .setFooter({ text: `DinoBot • Ticket System • ${typeLabels[ticketType]}` });
+
+  const row = new ActionRowBuilder().addComponents(
+    new ButtonBuilder()
+      .setCustomId(`ticket_resolve_${member.id}`)
+      .setLabel("Resolve")
+      .setEmoji("✅")
+      .setStyle(ButtonStyle.Success),
+    new ButtonBuilder()
+      .setCustomId(`ticket_close_${member.id}`)
+      .setLabel("Close Without Resolving")
+      .setEmoji("🗑️")
+      .setStyle(ButtonStyle.Danger)
+  );
+
+  const staffPing = `<@&${ROLE_IDS.mods}>`;
+  await channel.send({
+    content: anonymous ? `${staffPing} 🎟️ New anonymous ticket!` : `${staffPing} 🎟️ New ticket from ${member}!`,
+    embeds: [embed],
+    components: [row]
+  });
+
+  console.log(`✅ Ticket created: ${channelName} (${ticketType}${anonymous ? ", anonymous" : ""})`);
+  return channel;
+}
+
+// ----------------------------
 // BUTTON INTERACTION HANDLER
 // ----------------------------
 client.on("interactionCreate", async (interaction) => {
@@ -539,7 +812,68 @@ client.on("interactionCreate", async (interaction) => {
   const member = await guild.members.fetch(user.id);
 
   try {
+
+    // ----------------------------
+    // TICKET BUTTONS
+    // ----------------------------
+    const ticketTypes = ["report", "feedback", "suggestion", "question", "appeal"];
+    const ticketMatch = ticketTypes.find(t => customId === `ticket_${t}`);
+
+    if (ticketMatch) {
+      // Check for existing open ticket
+      if (openTickets.has(user.id)) {
+        const existingChannelId = openTickets.get(user.id);
+        await interaction.reply({
+          content: `❌ You already have an open ticket! Please resolve it before opening a new one. <#${existingChannelId}>`,
+          flags: 64
+        });
+        return;
+      }
+
+      const anonymous = ticketMatch === "report";
+      const ticketChannel = await createTicketChannel(guild, member, ticketMatch, anonymous);
+
+      if (!ticketChannel) {
+        await interaction.reply({
+          content: "❌ You already have an open ticket! Please resolve it before opening a new one.",
+          flags: 64
+        });
+        return;
+      }
+
+      if (anonymous) {
+        await interaction.reply({
+          content: `🔒 Your anonymous ticket has been submitted. The mod team will handle it shortly.`,
+          flags: 64
+        });
+      } else {
+        await interaction.reply({
+          content: `✅ Your ticket has been created! <#${ticketChannel.id}>`,
+          flags: 64
+        });
+      }
+      return;
+    }
+
+    // Resolve ticket
+    if (customId.startsWith("ticket_resolve_")) {
+      const ticketUserId = customId.replace("ticket_resolve_", "");
+      await logAndCloseTicket(guild, interaction.channel, ticketUserId, "resolved", interaction.user);
+      await interaction.update({ components: [] }).catch(() => {});
+      return;
+    }
+
+    // Close without resolving
+    if (customId.startsWith("ticket_close_")) {
+      const ticketUserId = customId.replace("ticket_close_", "");
+      await logAndCloseTicket(guild, interaction.channel, ticketUserId, "closed", interaction.user);
+      await interaction.update({ components: [] }).catch(() => {});
+      return;
+    }
+
+    // ----------------------------
     // NOTIFICATION BUTTONS
+    // ----------------------------
     if (customId === "notif_stream_alerts") {
       if (member.roles.cache.has(ROLE_IDS.streamAlerts)) {
         await member.roles.remove(ROLE_IDS.streamAlerts);
@@ -562,7 +896,9 @@ client.on("interactionCreate", async (interaction) => {
       return;
     }
 
+    // ----------------------------
     // PICK YOUR ROLES BUTTONS
+    // ----------------------------
     if (customId === "roles_gamers") {
       if (member.roles.cache.has(ROLE_IDS.gamers)) {
         await member.roles.remove(ROLE_IDS.gamers);
@@ -607,7 +943,9 @@ client.on("interactionCreate", async (interaction) => {
       return;
     }
 
+    // ----------------------------
     // ONBOARDING BUTTONS
+    // ----------------------------
     const parts = customId.split("_");
     const memberId = parts[parts.length - 1];
 
@@ -616,7 +954,6 @@ client.on("interactionCreate", async (interaction) => {
       return;
     }
 
-    // Step 1 — Accept rules
     if (customId.startsWith("onboard_accept_rules_")) {
       await member.roles.remove(ROLE_IDS.unverified);
       await member.roles.add(ROLE_IDS.goofyGoobers);
@@ -635,7 +972,6 @@ client.on("interactionCreate", async (interaction) => {
       return;
     }
 
-    // Step 2 — Interest role
     if (customId.startsWith("onboard_gamers_")) {
       await member.roles.add(ROLE_IDS.gamers);
       await interaction.update({
@@ -677,7 +1013,6 @@ client.on("interactionCreate", async (interaction) => {
       return;
     }
 
-    // Step 3 — Content role
     if (customId.startsWith("onboard_streamer_")) {
       await member.roles.add(ROLE_IDS.streamer);
       await interaction.update({
@@ -706,7 +1041,6 @@ client.on("interactionCreate", async (interaction) => {
       return;
     }
 
-    // Step 4 — Notification preferences
     if (customId.startsWith("onboard_notif_")) {
       const stripped = customId.replace(`onboard_notif_`, "").replace(`_${memberId}`, "");
 
@@ -741,6 +1075,46 @@ client.on("interactionCreate", async (interaction) => {
 });
 
 // ----------------------------
+// LOG AND CLOSE TICKET
+// ----------------------------
+async function logAndCloseTicket(guild, channel, ticketUserId, status, closedBy) {
+  try {
+    const messages = await channel.messages.fetch({ limit: 50 });
+    const firstEmbed = messages.filter(m => m.embeds.length > 0).last();
+    const ticketType = firstEmbed?.embeds[0]?.footer?.text?.replace("DinoBot • Ticket System • ", "") || "Unknown";
+
+    openTickets.delete(ticketUserId);
+
+    if (modTicketsChannelId) {
+      const logChannel = await guild.channels.fetch(modTicketsChannelId).catch(() => null);
+      if (logChannel) {
+        const logEmbed = new EmbedBuilder()
+          .setTitle(`🎟️ Ticket ${status === "resolved" ? "Resolved ✅" : "Closed 🗑️"}`)
+          .setDescription(
+            `**Type:** ${ticketType}\n` +
+            `**Status:** ${status === "resolved" ? "✅ Resolved" : "🗑️ Closed without resolving"}\n` +
+            `**Closed by:** ${closedBy}\n` +
+            `**Channel:** ${channel.name}`
+          )
+          .setColor(status === "resolved" ? 0x57F287 : 0xED4245)
+          .setTimestamp()
+          .setFooter({ text: "DinoBot • Ticket Log" });
+
+        await logChannel.send({ embeds: [logEmbed] });
+      }
+    }
+
+    setTimeout(async () => {
+      await channel.delete().catch(() => {});
+      console.log(`🗑️ Ticket channel deleted: ${channel.name}`);
+    }, 5000);
+
+  } catch (err) {
+    console.error("❌ Error closing ticket:", err);
+  }
+}
+
+// ----------------------------
 // STEP 2 — INTEREST ROLE SELECTION
 // ----------------------------
 async function sendInterestRoleSelection(channel, member) {
@@ -754,8 +1128,7 @@ async function sendInterestRoleSelection(channel, member) {
       "⏭️ **Skip** — no role assigned, no questions asked\n\n" +
       "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n" +
       "⚠️ **This role is completely optional.**\n" +
-      "These unlock private hidden channels based on your interests. " +
-      "You are under no obligation to pick one.\n\n" +
+      "These unlock private hidden channels based on your interests.\n\n" +
       "*This selection is completely private. Nobody else can see what you choose.*"
     )
     .setColor(0x9146FF)
