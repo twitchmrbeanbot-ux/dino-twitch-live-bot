@@ -16,9 +16,6 @@ const fetch = (...args) => import("node-fetch").then(({ default: f }) => f(...ar
 const app = express();
 const PORT = process.env.PORT || 3000;
 
-// ----------------------------
-// CONSTANTS
-// ----------------------------
 const GUILD_ID = "1480080172400250992";
 const WELCOME_CHANNEL_ID = "1480080173469532194";
 const RULES_CHANNEL_ID = "1480080173469532195";
@@ -29,8 +26,8 @@ const ROLE_IDS = {
   goofyGoobers: "1480088633540083732",
   streamer: "1480647124038455498",
   viewer: "1480647124529189128",
-  bros: "1480674153722937354",
-  gurls: "1480674490231816403",
+  gamers: "1480674153722937354",
+  creative: "1480674490231816403",
   mods: "1480282547769573538",
   admin: "1480083446704509091",
   owner: "1480082698159525909",
@@ -43,9 +40,6 @@ let onboardingCategoryId = null;
 let pickRolesChannelId = null;
 let notificationChannelId = null;
 
-// ----------------------------
-// GLOBAL ERROR LOGGING
-// ----------------------------
 process.on("unhandledRejection", (reason) => {
   console.error("❌ UNHANDLED REJECTION:", reason);
 });
@@ -54,18 +48,10 @@ process.on("uncaughtException", (err) => {
   console.error("❌ UNCAUGHT EXCEPTION:", err);
 });
 
-// ----------------------------
-// EXPRESS RAW BODY
-// ----------------------------
 app.use(express.json({
-  verify: (req, res, buf) => {
-    req.rawBody = buf;
-  }
+  verify: (req, res, buf) => { req.rawBody = buf; }
 }));
 
-// ----------------------------
-// DISCORD CLIENT
-// ----------------------------
 const client = new Client({
   intents: [
     GatewayIntentBits.Guilds,
@@ -78,7 +64,6 @@ const client = new Client({
 
 client.once("clientReady", async () => {
   console.log(`✅ DinoBot online as ${client.user.tag}`);
-
   try {
     await setupOnboardingCategory();
     await setupRulesMessage();
@@ -89,7 +74,6 @@ client.once("clientReady", async () => {
   } catch (err) {
     console.error("❌ Onboarding setup error:", err);
   }
-
   try {
     await subscribeToTwitchUsers();
     console.log("✅ Twitch subscriptions active");
@@ -120,12 +104,7 @@ async function setupOnboardingCategory() {
   const category = await guild.channels.create({
     name: "ONBOARDING",
     type: ChannelType.GuildCategory,
-    permissionOverwrites: [
-      {
-        id: guild.roles.everyone.id,
-        deny: [PermissionFlagsBits.ViewChannel]
-      }
-    ]
+    permissionOverwrites: [{ id: guild.roles.everyone.id, deny: [PermissionFlagsBits.ViewChannel] }]
   });
 
   onboardingCategoryId = category.id;
@@ -182,10 +161,10 @@ async function postPickRolesMessage(channel) {
     .setDescription(
       "Use the buttons below to assign or update your roles anytime!\n\n" +
       "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n" +
-      "**Optional — Gender Space**\n\n" +
-      "😎 **BROS** — private hangout space for the guys\n" +
-      "💅 **Gurls** — private hangout space for the girls\n\n" +
-      "⚠️ These roles are completely optional and exist in good faith for members who enjoy hanging out in a more relaxed same-gender space. " +
+      "**Optional — Interest Space**\n\n" +
+      "🎮 **Gamers** — private hangout space for gamers\n" +
+      "🎨 **Creative** — private hangout space for creative types\n\n" +
+      "⚠️ These roles are completely optional and exist as private spaces for members with shared interests. " +
       "These unlock private hidden channels. You are under no obligation to pick one.\n\n" +
       "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n" +
       "**Content Role**\n\n" +
@@ -197,17 +176,17 @@ async function postPickRolesMessage(channel) {
     .setColor(0x9146FF)
     .setFooter({ text: "DinoBot • Role Selection" });
 
-  const genderRow = new ActionRowBuilder().addComponents(
-    new ButtonBuilder().setCustomId("roles_bros").setLabel("BROS").setEmoji("😎").setStyle(ButtonStyle.Primary),
-    new ButtonBuilder().setCustomId("roles_gurls").setLabel("Gurls").setEmoji("💅").setStyle(ButtonStyle.Primary)
+  const interestRow = new ActionRowBuilder().addComponents(
+    new ButtonBuilder().setCustomId("roles_gamers").setLabel("Gamers").setEmoji("🎮").setStyle(ButtonStyle.Primary),
+    new ButtonBuilder().setCustomId("roles_creative").setLabel("Creative").setEmoji("🎨").setStyle(ButtonStyle.Primary)
   );
 
   const contentRow = new ActionRowBuilder().addComponents(
-    new ButtonBuilder().setCustomId("roles_streamer").setLabel("Streamer").setEmoji("🎮").setStyle(ButtonStyle.Success),
+    new ButtonBuilder().setCustomId("roles_streamer").setLabel("Streamer").setEmoji("🎙️").setStyle(ButtonStyle.Success),
     new ButtonBuilder().setCustomId("roles_viewer").setLabel("Viewer").setEmoji("👀").setStyle(ButtonStyle.Secondary)
   );
 
-  await channel.send({ embeds: [embed], components: [genderRow, contentRow] });
+  await channel.send({ embeds: [embed], components: [interestRow, contentRow] });
   console.log("✅ Pick your roles message posted");
 }
 
@@ -270,16 +249,8 @@ async function postNotificationMessage(channel) {
     .setFooter({ text: "DinoBot • Notification Settings" });
 
   const row = new ActionRowBuilder().addComponents(
-    new ButtonBuilder()
-      .setCustomId("notif_stream_alerts")
-      .setLabel("Stream Alerts")
-      .setEmoji("🔴")
-      .setStyle(ButtonStyle.Danger),
-    new ButtonBuilder()
-      .setCustomId("notif_announcements")
-      .setLabel("Announcements")
-      .setEmoji("📢")
-      .setStyle(ButtonStyle.Primary)
+    new ButtonBuilder().setCustomId("notif_stream_alerts").setLabel("Stream Alerts").setEmoji("🔴").setStyle(ButtonStyle.Danger),
+    new ButtonBuilder().setCustomId("notif_announcements").setLabel("Announcements").setEmoji("📢").setStyle(ButtonStyle.Primary)
   );
 
   await channel.send({ embeds: [embed], components: [row] });
@@ -300,10 +271,7 @@ async function lockChannelsForUnverified() {
 
     if (channel.id === WELCOME_CHANNEL_ID || channel.id === RULES_CHANNEL_ID) {
       await channel.permissionOverwrites.edit(ROLE_IDS.unverified, {
-        ViewChannel: true,
-        SendMessages: false,
-        AddReactions: false,
-        ReadMessageHistory: true
+        ViewChannel: true, SendMessages: false, AddReactions: false, ReadMessageHistory: true
       }).catch(() => {});
       continue;
     }
@@ -314,9 +282,7 @@ async function lockChannelsForUnverified() {
       channel.type === ChannelType.GuildVoice ||
       channel.type === ChannelType.GuildAnnouncement
     ) {
-      await channel.permissionOverwrites.edit(ROLE_IDS.unverified, {
-        ViewChannel: false
-      }).catch(() => {});
+      await channel.permissionOverwrites.edit(ROLE_IDS.unverified, { ViewChannel: false }).catch(() => {});
     }
   }
 
@@ -338,9 +304,7 @@ async function setupRulesMessage() {
     return;
   }
 
-  for (const msg of botMessages.values()) {
-    await msg.delete().catch(() => {});
-  }
+  for (const msg of botMessages.values()) await msg.delete().catch(() => {});
 
   const rulesEmbed = new EmbedBuilder()
     .setTitle("📋 Server Rules")
@@ -378,7 +342,6 @@ client.on("guildMemberAdd", async (member) => {
   try {
     console.log(`👋 New member joined: ${member.user.tag}`);
     await member.roles.add(ROLE_IDS.unverified);
-    console.log(`✅ Assigned Unverified role to ${member.user.tag}`);
 
     const guild = await client.guilds.fetch(GUILD_ID);
     const welcomeChannel = await client.channels.fetch(WELCOME_CHANNEL_ID);
@@ -398,7 +361,6 @@ client.on("guildMemberAdd", async (member) => {
 
     await welcomeChannel.send({ embeds: [welcomeEmbed] });
     await createOnboardingChannel(guild, member);
-
   } catch (err) {
     console.error("❌ Error handling new member:", err);
   }
@@ -410,11 +372,8 @@ client.on("guildMemberAdd", async (member) => {
 async function createOnboardingChannel(guild, member) {
   try {
     const channelName = `welcome-${member.user.username.toLowerCase().replace(/[^a-z0-9]/g, "")}`;
-
     const channels = await guild.channels.fetch();
-    const existing = channels.find(
-      c => c.parentId === onboardingCategoryId && c.name === channelName
-    );
+    const existing = channels.find(c => c.parentId === onboardingCategoryId && c.name === channelName);
 
     if (existing) {
       console.log(`ℹ️ Onboarding channel already exists for ${member.user.tag}`);
@@ -427,10 +386,7 @@ async function createOnboardingChannel(guild, member) {
       parent: onboardingCategoryId,
       permissionOverwrites: [
         { id: guild.roles.everyone.id, deny: [PermissionFlagsBits.ViewChannel] },
-        {
-          id: member.id,
-          allow: [PermissionFlagsBits.ViewChannel, PermissionFlagsBits.SendMessages, PermissionFlagsBits.ReadMessageHistory]
-        },
+        { id: member.id, allow: [PermissionFlagsBits.ViewChannel, PermissionFlagsBits.SendMessages, PermissionFlagsBits.ReadMessageHistory] },
         { id: ROLE_IDS.mods, allow: [PermissionFlagsBits.ViewChannel, PermissionFlagsBits.ReadMessageHistory] },
         { id: ROLE_IDS.admin, allow: [PermissionFlagsBits.ViewChannel, PermissionFlagsBits.ReadMessageHistory] },
         { id: ROLE_IDS.owner, allow: [PermissionFlagsBits.ViewChannel, PermissionFlagsBits.ReadMessageHistory] }
@@ -477,7 +433,6 @@ async function createOnboardingChannel(guild, member) {
     );
 
     await channel.send({ content: `${member}`, embeds: [rulesEmbed], components: [rulesRow] });
-
   } catch (err) {
     console.error("❌ Error creating onboarding channel:", err);
   }
@@ -494,9 +449,7 @@ client.on("interactionCreate", async (interaction) => {
 
   try {
 
-    // ----------------------------
-    // NOTIFICATION SETTINGS BUTTONS
-    // ----------------------------
+    // NOTIFICATION BUTTONS
     if (customId === "notif_stream_alerts") {
       if (member.roles.cache.has(ROLE_IDS.streamAlerts)) {
         await member.roles.remove(ROLE_IDS.streamAlerts);
@@ -519,27 +472,25 @@ client.on("interactionCreate", async (interaction) => {
       return;
     }
 
-    // ----------------------------
     // PICK YOUR ROLES BUTTONS
-    // ----------------------------
-    if (customId === "roles_bros") {
-      if (member.roles.cache.has(ROLE_IDS.bros)) {
-        await member.roles.remove(ROLE_IDS.bros);
-        await interaction.reply({ content: "✅ **BROS** 😎 role removed!", flags: 64 });
+    if (customId === "roles_gamers") {
+      if (member.roles.cache.has(ROLE_IDS.gamers)) {
+        await member.roles.remove(ROLE_IDS.gamers);
+        await interaction.reply({ content: "✅ **Gamers** 🎮 role removed!", flags: 64 });
       } else {
-        await member.roles.add(ROLE_IDS.bros);
-        await interaction.reply({ content: "✅ **BROS** 😎 role assigned!", flags: 64 });
+        await member.roles.add(ROLE_IDS.gamers);
+        await interaction.reply({ content: "✅ **Gamers** 🎮 role assigned!", flags: 64 });
       }
       return;
     }
 
-    if (customId === "roles_gurls") {
-      if (member.roles.cache.has(ROLE_IDS.gurls)) {
-        await member.roles.remove(ROLE_IDS.gurls);
-        await interaction.reply({ content: "✅ **Gurls** 💅 role removed!", flags: 64 });
+    if (customId === "roles_creative") {
+      if (member.roles.cache.has(ROLE_IDS.creative)) {
+        await member.roles.remove(ROLE_IDS.creative);
+        await interaction.reply({ content: "✅ **Creative** 🎨 role removed!", flags: 64 });
       } else {
-        await member.roles.add(ROLE_IDS.gurls);
-        await interaction.reply({ content: "✅ **Gurls** 💅 role assigned!", flags: 64 });
+        await member.roles.add(ROLE_IDS.creative);
+        await interaction.reply({ content: "✅ **Creative** 🎨 role assigned!", flags: 64 });
       }
       return;
     }
@@ -547,10 +498,10 @@ client.on("interactionCreate", async (interaction) => {
     if (customId === "roles_streamer") {
       if (member.roles.cache.has(ROLE_IDS.streamer)) {
         await member.roles.remove(ROLE_IDS.streamer);
-        await interaction.reply({ content: "✅ **Streamer** 🎮 role removed!", flags: 64 });
+        await interaction.reply({ content: "✅ **Streamer** 🎙️ role removed!", flags: 64 });
       } else {
         await member.roles.add(ROLE_IDS.streamer);
-        await interaction.reply({ content: "✅ **Streamer** 🎮 role assigned!", flags: 64 });
+        await interaction.reply({ content: "✅ **Streamer** 🎙️ role assigned!", flags: 64 });
       }
       return;
     }
@@ -566,9 +517,7 @@ client.on("interactionCreate", async (interaction) => {
       return;
     }
 
-    // ----------------------------
     // ONBOARDING BUTTONS
-    // ----------------------------
     const parts = customId.split("_");
     const memberId = parts[parts.length - 1];
 
@@ -584,62 +533,54 @@ client.on("interactionCreate", async (interaction) => {
       console.log(`✅ Rules accepted: ${user.tag}`);
 
       await interaction.update({
-        embeds: [
-          new EmbedBuilder()
-            .setTitle("✅ Rules Accepted!")
-            .setDescription("You're verified! Now let's get your roles set up.")
-            .setColor(0x57F287)
-            .setFooter({ text: "Step 1 of 4 — Complete ✅" })
-        ],
+        embeds: [new EmbedBuilder()
+          .setTitle("✅ Rules Accepted!")
+          .setDescription("You're verified! Now let's get your roles set up.")
+          .setColor(0x57F287)
+          .setFooter({ text: "Step 1 of 4 — Complete ✅" })],
         components: []
       });
 
-      await sendGenderRoleSelection(interaction.channel, member);
+      await sendInterestRoleSelection(interaction.channel, member);
       return;
     }
 
-    // Step 2 — Gender role
-    if (customId.startsWith("onboard_bros_")) {
-      await member.roles.add(ROLE_IDS.bros);
+    // Step 2 — Interest role
+    if (customId.startsWith("onboard_gamers_")) {
+      await member.roles.add(ROLE_IDS.gamers);
       await interaction.update({
-        embeds: [
-          new EmbedBuilder()
-            .setTitle("😎 BROS role assigned!")
-            .setDescription("Nice! Keep going...")
-            .setColor(0x9146FF)
-            .setFooter({ text: "Step 2 of 4 — Complete ✅" })
-        ],
+        embeds: [new EmbedBuilder()
+          .setTitle("🎮 Gamers role assigned!")
+          .setDescription("Nice! Keep going...")
+          .setColor(0x9146FF)
+          .setFooter({ text: "Step 2 of 4 — Complete ✅" })],
         components: []
       });
       await sendContentRoleSelection(interaction.channel, member);
       return;
     }
 
-    if (customId.startsWith("onboard_gurls_")) {
-      await member.roles.add(ROLE_IDS.gurls);
+    if (customId.startsWith("onboard_creative_")) {
+      await member.roles.add(ROLE_IDS.creative);
       await interaction.update({
-        embeds: [
-          new EmbedBuilder()
-            .setTitle("💅 Gurls role assigned!")
-            .setDescription("Nice! Keep going...")
-            .setColor(0x9146FF)
-            .setFooter({ text: "Step 2 of 4 — Complete ✅" })
-        ],
+        embeds: [new EmbedBuilder()
+          .setTitle("🎨 Creative role assigned!")
+          .setDescription("Nice! Keep going...")
+          .setColor(0x9146FF)
+          .setFooter({ text: "Step 2 of 4 — Complete ✅" })],
         components: []
       });
       await sendContentRoleSelection(interaction.channel, member);
       return;
     }
 
-    if (customId.startsWith("onboard_skip_gender_")) {
+    if (customId.startsWith("onboard_skip_interest_")) {
       await interaction.update({
-        embeds: [
-          new EmbedBuilder()
-            .setTitle("⏭️ Skipped!")
-            .setDescription("No worries! Keep going...")
-            .setColor(0x9146FF)
-            .setFooter({ text: "Step 2 of 4 — Complete ✅" })
-        ],
+        embeds: [new EmbedBuilder()
+          .setTitle("⏭️ Skipped!")
+          .setDescription("No worries! Keep going...")
+          .setColor(0x9146FF)
+          .setFooter({ text: "Step 2 of 4 — Complete ✅" })],
         components: []
       });
       await sendContentRoleSelection(interaction.channel, member);
@@ -650,13 +591,11 @@ client.on("interactionCreate", async (interaction) => {
     if (customId.startsWith("onboard_streamer_")) {
       await member.roles.add(ROLE_IDS.streamer);
       await interaction.update({
-        embeds: [
-          new EmbedBuilder()
-            .setTitle("🎮 Streamer role assigned!")
-            .setDescription("Almost done!")
-            .setColor(0x57F287)
-            .setFooter({ text: "Step 3 of 4 — Complete ✅" })
-        ],
+        embeds: [new EmbedBuilder()
+          .setTitle("🎙️ Streamer role assigned!")
+          .setDescription("Almost done!")
+          .setColor(0x57F287)
+          .setFooter({ text: "Step 3 of 4 — Complete ✅" })],
         components: []
       });
       await sendNotificationSelection(interaction.channel, member);
@@ -666,13 +605,11 @@ client.on("interactionCreate", async (interaction) => {
     if (customId.startsWith("onboard_viewer_")) {
       await member.roles.add(ROLE_IDS.viewer);
       await interaction.update({
-        embeds: [
-          new EmbedBuilder()
-            .setTitle("👀 Viewer role assigned!")
-            .setDescription("Almost done!")
-            .setColor(0x57F287)
-            .setFooter({ text: "Step 3 of 4 — Complete ✅" })
-        ],
+        embeds: [new EmbedBuilder()
+          .setTitle("👀 Viewer role assigned!")
+          .setDescription("Almost done!")
+          .setColor(0x57F287)
+          .setFooter({ text: "Step 3 of 4 — Complete ✅" })],
         components: []
       });
       await sendNotificationSelection(interaction.channel, member);
@@ -681,24 +618,25 @@ client.on("interactionCreate", async (interaction) => {
 
     // Step 4 — Notification preferences
     if (customId.startsWith("onboard_notif_")) {
-      const selections = customId.replace(`onboard_notif_`, "").replace(`_${memberId}`, "").split("_and_");
+      const stripped = customId.replace(`onboard_notif_`, "").replace(`_${memberId}`, "");
 
-      if (selections.includes("stream")) await member.roles.add(ROLE_IDS.streamAlerts);
-      if (selections.includes("announcements")) await member.roles.add(ROLE_IDS.announcements);
+      if (stripped.includes("stream")) await member.roles.add(ROLE_IDS.streamAlerts);
+      if (stripped.includes("announcements")) await member.roles.add(ROLE_IDS.announcements);
 
       const selected = [];
-      if (selections.includes("stream")) selected.push("🔴 Stream Alerts");
-      if (selections.includes("announcements")) selected.push("📢 Announcements");
-      if (selections.includes("skip")) selected.push("None");
+      if (stripped.includes("stream")) selected.push("🔴 Stream Alerts");
+      if (stripped.includes("announcements")) selected.push("📢 Announcements");
 
       await interaction.update({
-        embeds: [
-          new EmbedBuilder()
-            .setTitle("🔔 Notifications set!")
-            .setDescription(selected.length ? `You selected: **${selected.join(", ")}**\n\nYou can change this anytime in #🔔notification-settings.` : "No notifications selected. You can opt in anytime in #🔔notification-settings.")
-            .setColor(0x57F287)
-            .setFooter({ text: "Step 4 of 4 — Complete ✅" })
-        ],
+        embeds: [new EmbedBuilder()
+          .setTitle("🔔 Notifications set!")
+          .setDescription(
+            selected.length
+              ? `You selected: **${selected.join(", ")}**\n\nYou can change this anytime in #🔔notification-settings.`
+              : "No notifications selected. You can opt in anytime in #🔔notification-settings."
+          )
+          .setColor(0x57F287)
+          .setFooter({ text: "Step 4 of 4 — Complete ✅" })],
         components: []
       });
 
@@ -713,30 +651,30 @@ client.on("interactionCreate", async (interaction) => {
 });
 
 // ----------------------------
-// STEP 2 — GENDER ROLE SELECTION
+// STEP 2 — INTEREST ROLE SELECTION
 // ----------------------------
-async function sendGenderRoleSelection(channel, member) {
+async function sendInterestRoleSelection(channel, member) {
   const embed = new EmbedBuilder()
     .setTitle("🎭 Optional Role")
     .setDescription(
-      "This next role is completely optional:\n\n" +
+      "Want access to a private interest space?\n\n" +
       "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n" +
-      "😎 **BROS** — private hangout space for the guys\n" +
-      "💅 **Gurls** — private hangout space for the girls\n" +
+      "🎮 **Gamers** — private hangout for gamers\n" +
+      "🎨 **Creative** — private hangout for creative types\n" +
       "⏭️ **Skip** — no role assigned, no questions asked\n\n" +
       "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n" +
       "⚠️ **This role is completely optional.**\n" +
-      "BROS & Gurls roles exist in good faith for members who enjoy hanging out in a more relaxed same-gender space. " +
-      "These unlock private hidden channels. You are under no obligation to pick one.\n\n" +
+      "These unlock private hidden channels based on your interests. " +
+      "You are under no obligation to pick one.\n\n" +
       "*This selection is completely private. Nobody else can see what you choose.*"
     )
     .setColor(0x9146FF)
     .setFooter({ text: "Step 2 of 4 — Pick a role or skip" });
 
   const row = new ActionRowBuilder().addComponents(
-    new ButtonBuilder().setCustomId(`onboard_bros_${member.id}`).setLabel("BROS").setEmoji("😎").setStyle(ButtonStyle.Primary),
-    new ButtonBuilder().setCustomId(`onboard_gurls_${member.id}`).setLabel("Gurls").setEmoji("💅").setStyle(ButtonStyle.Primary),
-    new ButtonBuilder().setCustomId(`onboard_skip_gender_${member.id}`).setLabel("Skip").setEmoji("⏭️").setStyle(ButtonStyle.Secondary)
+    new ButtonBuilder().setCustomId(`onboard_gamers_${member.id}`).setLabel("Gamers").setEmoji("🎮").setStyle(ButtonStyle.Primary),
+    new ButtonBuilder().setCustomId(`onboard_creative_${member.id}`).setLabel("Creative").setEmoji("🎨").setStyle(ButtonStyle.Primary),
+    new ButtonBuilder().setCustomId(`onboard_skip_interest_${member.id}`).setLabel("Skip").setEmoji("⏭️").setStyle(ButtonStyle.Secondary)
   );
 
   await channel.send({ embeds: [embed], components: [row] });
@@ -750,14 +688,14 @@ async function sendContentRoleSelection(channel, member) {
     .setTitle("🎮 Content Role")
     .setDescription(
       "Are you a streamer or a viewer?\n\n" +
-      "🎮 **Streamer** — You stream on Twitch\n" +
+      "🎙️ **Streamer** — You stream on Twitch\n" +
       "👀 **Viewer** — You watch streams"
     )
     .setColor(0x9146FF)
     .setFooter({ text: "Step 3 of 4 — Pick your content role" });
 
   const row = new ActionRowBuilder().addComponents(
-    new ButtonBuilder().setCustomId(`onboard_streamer_${member.id}`).setLabel("Streamer").setEmoji("🎮").setStyle(ButtonStyle.Primary),
+    new ButtonBuilder().setCustomId(`onboard_streamer_${member.id}`).setLabel("Streamer").setEmoji("🎙️").setStyle(ButtonStyle.Primary),
     new ButtonBuilder().setCustomId(`onboard_viewer_${member.id}`).setLabel("Viewer").setEmoji("👀").setStyle(ButtonStyle.Secondary)
   );
 
@@ -817,9 +755,7 @@ async function finishOnboarding(channel, member) {
 // ----------------------------
 // HEALTH CHECK
 // ----------------------------
-app.get("/", (req, res) => {
-  res.send("DinoBot running");
-});
+app.get("/", (req, res) => res.send("DinoBot running"));
 
 // ----------------------------
 // TWITCH HELPERS
@@ -842,10 +778,7 @@ async function getTwitchToken() {
 async function getTwitchUserIds(token, logins) {
   const params = logins.map(l => `login=${encodeURIComponent(l)}`).join("&");
   const res = await fetch(`https://api.twitch.tv/helix/users?${params}`, {
-    headers: {
-      "Client-ID": process.env.TWITCH_CLIENT_ID,
-      "Authorization": `Bearer ${token}`
-    }
+    headers: { "Client-ID": process.env.TWITCH_CLIENT_ID, "Authorization": `Bearer ${token}` }
   });
   const data = await res.json();
   if (!res.ok) throw new Error(`Failed to get Twitch users: ${JSON.stringify(data)}`);
@@ -877,10 +810,7 @@ async function createEventSubSubscription(token, userId) {
 
 async function getStreamInfo(token, userId) {
   const res = await fetch(`https://api.twitch.tv/helix/streams?user_id=${encodeURIComponent(userId)}`, {
-    headers: {
-      "Client-ID": process.env.TWITCH_CLIENT_ID,
-      "Authorization": `Bearer ${token}`
-    }
+    headers: { "Client-ID": process.env.TWITCH_CLIENT_ID, "Authorization": `Bearer ${token}` }
   });
   const data = await res.json();
   if (!res.ok) throw new Error(`Failed to get stream info: ${JSON.stringify(data)}`);
@@ -889,19 +819,14 @@ async function getStreamInfo(token, userId) {
 
 async function subscribeToTwitchUsers() {
   const logins = process.env.TWITCH_USER_LOGINS
-    .split(",")
-    .map(l => l.trim().toLowerCase())
-    .filter(Boolean);
+    .split(",").map(l => l.trim().toLowerCase()).filter(Boolean);
 
   console.log("Monitoring:", logins.join(", "));
 
   const token = await getTwitchToken();
   const users = await getTwitchUserIds(token, logins);
 
-  if (!users.length) {
-    console.warn("⚠️ No Twitch users found");
-    return;
-  }
+  if (!users.length) { console.warn("⚠️ No Twitch users found"); return; }
 
   for (const user of users) {
     const result = await createEventSubSubscription(token, user.id);
@@ -915,14 +840,8 @@ async function subscribeToTwitchUsers() {
   }
 }
 
-// ----------------------------
-// DUPLICATE PROTECTION
-// ----------------------------
 const processedMessageIds = new Set();
 
-// ----------------------------
-// TWITCH EVENTSUB WEBHOOK
-// ----------------------------
 app.post("/twitch/eventsub", async (req, res) => {
   try {
     const secret = process.env.TWITCH_WEBHOOK_SECRET;
@@ -944,9 +863,7 @@ app.post("/twitch/eventsub", async (req, res) => {
 
     if (processedMessageIds.has(messageId)) return res.status(200).send("Duplicate ignored");
     processedMessageIds.add(messageId);
-    if (processedMessageIds.size > 1000) {
-      processedMessageIds.delete(processedMessageIds.values().next().value);
-    }
+    if (processedMessageIds.size > 1000) processedMessageIds.delete(processedMessageIds.values().next().value);
 
     if (messageType === "webhook_callback_verification") {
       return res.status(200).type("text/plain").send(req.body.challenge);
@@ -962,9 +879,7 @@ app.post("/twitch/eventsub", async (req, res) => {
 
       if (!channel || !stream) return res.status(200).send("Missing data");
 
-      const thumbnailUrl = stream.thumbnail_url
-        .replace("{width}", "1280")
-        .replace("{height}", "720");
+      const thumbnailUrl = stream.thumbnail_url.replace("{width}", "1280").replace("{height}", "720");
 
       const embed = new EmbedBuilder()
         .setTitle(`🦕 ${broadcaster_user_name} is now LIVE on Twitch!`)
@@ -993,25 +908,15 @@ app.post("/twitch/eventsub", async (req, res) => {
   }
 });
 
-// ----------------------------
-// START SERVER
-// ----------------------------
-app.listen(PORT, () => {
-  console.log(`✅ Server running on port ${PORT}`);
-});
+app.listen(PORT, () => console.log(`✅ Server running on port ${PORT}`));
 
-// ----------------------------
-// DISCORD LOGIN
-// ----------------------------
 (async () => {
   try {
     const token = (process.env.DISCORD_TOKEN || "").trim();
     await new Promise(resolve => setTimeout(resolve, 3000));
     await Promise.race([
       client.login(token),
-      new Promise((_, reject) =>
-        setTimeout(() => reject(new Error("Discord login timeout")), 30000)
-      )
+      new Promise((_, reject) => setTimeout(() => reject(new Error("Discord login timeout")), 30000))
     ]);
   } catch (err) {
     console.error("❌ Discord login failed:", err.message);
