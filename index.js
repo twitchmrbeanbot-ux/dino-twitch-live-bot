@@ -27,6 +27,8 @@ const INFO_CATEGORY_ID = "1480080173469532193";
 const MOD_LOGS_CHANNEL_ID = "1480080173469532199";
 const SPAM_LOGS_CHANNEL_ID = "1480080173868257333";
 const MOD_CHAT_CHANNEL_ID = "1480080173868257334";
+const MRBEAN_ANNOUNCEMENTS_CHANNEL_ID = "1480080173868257336";
+const MRBEAN_TWITCH_LOGIN = "mrbeanthedino";
 
 const ROLE_IDS = {
   unverified: "1480647122285236438",
@@ -46,7 +48,6 @@ const ROLE_IDS = {
 const MIN_ACCOUNT_AGE_DAYS = 7;
 const BIRTHDAY_FILE = "./birthdays.json";
 
-// Load birthdays from file
 let birthdays = {};
 if (fs.existsSync(BIRTHDAY_FILE)) {
   try { birthdays = JSON.parse(fs.readFileSync(BIRTHDAY_FILE, "utf8")); }
@@ -154,11 +155,7 @@ async function runBirthdayCheck() {
 
   try {
     const guild = await client.guilds.fetch(GUILD_ID);
-
-    // Remove yesterday's birthday roles and channels
     await cleanupBirthdays(guild);
-
-    // Check today's birthdays
     for (const [userId, data] of Object.entries(birthdays)) {
       if (data.month === todayMonth && data.day === todayDay) {
         await celebrateBirthday(guild, userId);
@@ -171,7 +168,6 @@ async function runBirthdayCheck() {
 
 async function cleanupBirthdays(guild) {
   try {
-    // Remove birthday role from all members who have it
     const members = await guild.members.fetch();
     for (const member of members.values()) {
       if (member.roles.cache.has(ROLE_IDS.birthday)) {
@@ -179,8 +175,6 @@ async function cleanupBirthdays(guild) {
         console.log(`🎂 Removed birthday role from ${member.user.tag}`);
       }
     }
-
-    // Delete any existing birthday channels
     const channels = await guild.channels.fetch();
     for (const channel of channels.values()) {
       if (channel && channel.parentId === birthdayCategoryId && channel.name.startsWith("🎉happy-birthday-")) {
@@ -196,17 +190,11 @@ async function cleanupBirthdays(guild) {
 async function celebrateBirthday(guild, userId) {
   try {
     const member = await guild.members.fetch(userId).catch(() => null);
-    if (!member) {
-      console.log(`⚠️ Birthday member not found: ${userId}`);
-      return;
-    }
+    if (!member) { console.log(`⚠️ Birthday member not found: ${userId}`); return; }
 
     console.log(`🎂 It's ${member.user.tag}'s birthday!`);
-
-    // Assign birthday role
     await member.roles.add(ROLE_IDS.birthday).catch(() => {});
 
-    // Create birthday channel
     const safeName = member.user.username.toLowerCase().replace(/[^a-z0-9]/g, "");
     const channel = await guild.channels.create({
       name: `🎉happy-birthday-${safeName}`,
@@ -222,7 +210,6 @@ async function celebrateBirthday(guild, userId) {
       ]
     });
 
-    // Post birthday embed
     const embed = new EmbedBuilder()
       .setTitle(`🎂 Happy Birthday, ${member.user.username}! 🎉`)
       .setDescription(
@@ -240,7 +227,6 @@ async function celebrateBirthday(guild, userId) {
       embeds: [embed]
     });
 
-    // DM the birthday member
     try {
       await member.send({
         embeds: [new EmbedBuilder()
@@ -271,14 +257,10 @@ async function setupBirthdayCategory() {
   if (existing) { birthdayCategoryId = existing.id; console.log("ℹ️ Birthdays category already exists"); return; }
 
   const category = await guild.channels.create({
-    name: "BIRTHDAYS",
-    type: ChannelType.GuildCategory,
+    name: "BIRTHDAYS", type: ChannelType.GuildCategory,
     permissionOverwrites: [
       { id: guild.roles.everyone.id, deny: [PermissionFlagsBits.ViewChannel] },
-      {
-        id: ROLE_IDS.goofyGoobers,
-        allow: [PermissionFlagsBits.ViewChannel, PermissionFlagsBits.SendMessages, PermissionFlagsBits.ReadMessageHistory]
-      }
+      { id: ROLE_IDS.goofyGoobers, allow: [PermissionFlagsBits.ViewChannel, PermissionFlagsBits.SendMessages, PermissionFlagsBits.ReadMessageHistory] }
     ]
   });
 
@@ -292,10 +274,7 @@ async function setupBirthdayCategory() {
 async function setupBirthdayRegisterChannel() {
   const guild = await client.guilds.fetch(GUILD_ID);
   const channels = await guild.channels.fetch();
-
-  const existing = channels.find(
-    c => c.parentId === INFO_CATEGORY_ID && c.name === "🎂birthday-register"
-  );
+  const existing = channels.find(c => c.parentId === INFO_CATEGORY_ID && c.name === "🎂birthday-register");
 
   if (existing) {
     birthdayRegisterChannelId = existing.id;
@@ -308,17 +287,11 @@ async function setupBirthdayRegisterChannel() {
   }
 
   const channel = await guild.channels.create({
-    name: "🎂birthday-register",
-    type: ChannelType.GuildText,
-    parent: INFO_CATEGORY_ID,
+    name: "🎂birthday-register", type: ChannelType.GuildText, parent: INFO_CATEGORY_ID,
     permissionOverwrites: [
       { id: guild.roles.everyone.id, deny: [PermissionFlagsBits.ViewChannel] },
       { id: ROLE_IDS.unverified, deny: [PermissionFlagsBits.ViewChannel] },
-      {
-        id: ROLE_IDS.goofyGoobers,
-        allow: [PermissionFlagsBits.ViewChannel, PermissionFlagsBits.ReadMessageHistory],
-        deny: [PermissionFlagsBits.SendMessages]
-      }
+      { id: ROLE_IDS.goofyGoobers, allow: [PermissionFlagsBits.ViewChannel, PermissionFlagsBits.ReadMessageHistory], deny: [PermissionFlagsBits.SendMessages] }
     ]
   });
 
@@ -327,9 +300,6 @@ async function setupBirthdayRegisterChannel() {
   await postBirthdayRegisterMessage(channel);
 }
 
-// ----------------------------
-// POST BIRTHDAY REGISTER MESSAGE
-// ----------------------------
 async function postBirthdayRegisterMessage(channel) {
   const embed = new EmbedBuilder()
     .setTitle("🎂 Birthday Register")
@@ -350,16 +320,8 @@ async function postBirthdayRegisterMessage(channel) {
     .setFooter({ text: "DinoBot • Birthday System" });
 
   const row = new ActionRowBuilder().addComponents(
-    new ButtonBuilder()
-      .setCustomId("birthday_set")
-      .setLabel("Set My Birthday")
-      .setEmoji("🎂")
-      .setStyle(ButtonStyle.Success),
-    new ButtonBuilder()
-      .setCustomId("birthday_remove")
-      .setLabel("Remove My Birthday")
-      .setEmoji("🗑️")
-      .setStyle(ButtonStyle.Danger)
+    new ButtonBuilder().setCustomId("birthday_set").setLabel("Set My Birthday").setEmoji("🎂").setStyle(ButtonStyle.Success),
+    new ButtonBuilder().setCustomId("birthday_remove").setLabel("Remove My Birthday").setEmoji("🗑️").setStyle(ButtonStyle.Danger)
   );
 
   await channel.send({ embeds: [embed], components: [row] });
@@ -448,9 +410,6 @@ async function setupSupportChannel() {
   await postSupportMessage(channel);
 }
 
-// ----------------------------
-// POST SUPPORT MESSAGE
-// ----------------------------
 async function postSupportMessage(channel) {
   const embed = new EmbedBuilder()
     .setTitle("🎟️ Support & Tickets")
@@ -534,9 +493,6 @@ async function setupPickRolesChannel() {
   await postPickRolesMessage(channel);
 }
 
-// ----------------------------
-// POST PICK ROLES MESSAGE
-// ----------------------------
 async function postPickRolesMessage(channel) {
   const embed = new EmbedBuilder()
     .setTitle("🎭 Pick Your Roles")
@@ -600,9 +556,6 @@ async function setupNotificationChannel() {
   await postNotificationMessage(channel);
 }
 
-// ----------------------------
-// POST NOTIFICATION MESSAGE
-// ----------------------------
 async function postNotificationMessage(channel) {
   const embed = new EmbedBuilder()
     .setTitle("🔔 Notification Settings")
@@ -655,9 +608,6 @@ async function setupBotInfoChannel() {
   await postBotInfoMessage(channel);
 }
 
-// ----------------------------
-// POST BOT INFO MESSAGE
-// ----------------------------
 async function postBotInfoMessage(channel) {
   const embed = new EmbedBuilder()
     .setTitle("🤖 DinoBot — Server Guide")
@@ -906,7 +856,46 @@ async function createOnboardingChannel(guild, member) {
       ]
     });
 
+    // Store creation time for timeout check
     console.log(`✅ Created onboarding channel for ${member.user.tag}`);
+
+    // Schedule 24hr timeout check
+    setTimeout(async () => {
+      try {
+        const freshMember = await guild.members.fetch(member.id).catch(() => null);
+        if (!freshMember) return;
+
+        // If still unverified after 24hrs — kick and delete channel
+        if (freshMember.roles.cache.has(ROLE_IDS.unverified)) {
+          try {
+            await freshMember.send({
+              embeds: [new EmbedBuilder()
+                .setTitle("👋 You were removed from DinoGang")
+                .setDescription(
+                  "Hey! You didn't complete onboarding in time.\n\n" +
+                  "**You need to accept the rules to join the server.**\n\n" +
+                  "You're always welcome to rejoin and finish onboarding — it only takes a minute! 🦕\n\n" +
+                  "*If you have any issues joining, feel free to reach out.*"
+                )
+                .setColor(0xED4245)
+                .setFooter({ text: "DinoGang • Onboarding Timeout" })]
+            });
+          } catch { /* DMs disabled */ }
+
+          await freshMember.kick("Did not complete onboarding within 24 hours");
+          console.log(`🦵 Kicked for incomplete onboarding: ${member.user.tag}`);
+        }
+
+        // Either way delete the stale onboarding channel
+        const staleChannel = await guild.channels.fetch(channel.id).catch(() => null);
+        if (staleChannel) {
+          await staleChannel.delete().catch(() => {});
+          console.log(`🗑️ Deleted stale onboarding channel for ${member.user.tag}`);
+        }
+      } catch (err) {
+        console.error("❌ Onboarding timeout error:", err);
+      }
+    }, 24 * 60 * 60 * 1000);
 
     const rulesEmbed = new EmbedBuilder()
       .setTitle("📋 Server Rules")
@@ -917,7 +906,7 @@ async function createOnboardingChannel(guild, member) {
         "**🔞 Age Requirement**\n" +
         "This server is 18+ only. Anyone found to be under 18 will be removed immediately.\n\n" +
         "**🤝 Respect Everyone**\n" +
-        "No harassment, bullying, hate speech, personal attacks, or threats. Friendly banter is fine — targeted harassment is not.\n\n" +
+        "No harassment, bullying, hate speak, personal attacks, or threats. Friendly banter is fine — targeted harassment is not.\n\n" +
         "**🚫 Illegal Content**\n" +
         "No illegal material, piracy, doxxing, malware, scams, or phishing. Violations result in immediate removal.\n\n" +
         "**🔞 Mature Content**\n" +
@@ -1032,9 +1021,6 @@ client.on("interactionCreate", async (interaction) => {
 
   try {
 
-    // ----------------------------
-    // ACCOUNT AGE CHECK BUTTONS
-    // ----------------------------
     if (customId.startsWith("agecheck_approve_")) {
       const targetUserId = customId.replace("agecheck_approve_", "");
       await interaction.update({
@@ -1084,26 +1070,19 @@ client.on("interactionCreate", async (interaction) => {
       return;
     }
 
-    // ----------------------------
-    // BIRTHDAY BUTTONS
-    // ----------------------------
     if (customId === "birthday_set") {
       const modal = new ModalBuilder()
         .setCustomId("birthday_modal_set")
         .setTitle("🎂 Set Your Birthday");
 
       const monthInput = new TextInputBuilder()
-        .setCustomId("birthday_month")
-        .setLabel("Birth Month (1-12)")
-        .setStyle(TextInputStyle.Short)
-        .setPlaceholder("e.g. 3 for March, 12 for December")
+        .setCustomId("birthday_month").setLabel("Birth Month (1-12)")
+        .setStyle(TextInputStyle.Short).setPlaceholder("e.g. 3 for March, 12 for December")
         .setMinLength(1).setMaxLength(2).setRequired(true);
 
       const dayInput = new TextInputBuilder()
-        .setCustomId("birthday_day")
-        .setLabel("Birth Day (1-31)")
-        .setStyle(TextInputStyle.Short)
-        .setPlaceholder("e.g. 15")
+        .setCustomId("birthday_day").setLabel("Birth Day (1-31)")
+        .setStyle(TextInputStyle.Short).setPlaceholder("e.g. 15")
         .setMinLength(1).setMaxLength(2).setRequired(true);
 
       modal.addComponents(
@@ -1127,9 +1106,6 @@ client.on("interactionCreate", async (interaction) => {
       return;
     }
 
-    // ----------------------------
-    // TICKET BUTTONS — show modal
-    // ----------------------------
     const ticketTypes = ["report", "feedback", "suggestion", "question", "appeal"];
     const ticketMatch = ticketTypes.find(t => customId === `ticket_${t}`);
 
@@ -1192,7 +1168,6 @@ client.on("interactionCreate", async (interaction) => {
       return;
     }
 
-    // Resolve ticket
     if (customId.startsWith("ticket_resolve_")) {
       const ticketUserId = customId.replace("ticket_resolve_", "");
       await logAndCloseTicket(guild, interaction.channel, ticketUserId, "resolved", interaction.user);
@@ -1200,7 +1175,6 @@ client.on("interactionCreate", async (interaction) => {
       return;
     }
 
-    // Close without resolving
     if (customId.startsWith("ticket_close_")) {
       const ticketUserId = customId.replace("ticket_close_", "");
       await logAndCloseTicket(guild, interaction.channel, ticketUserId, "closed", interaction.user);
@@ -1208,9 +1182,6 @@ client.on("interactionCreate", async (interaction) => {
       return;
     }
 
-    // ----------------------------
-    // NOTIFICATION BUTTONS
-    // ----------------------------
     if (customId === "notif_stream_alerts") {
       if (member.roles.cache.has(ROLE_IDS.streamAlerts)) {
         await member.roles.remove(ROLE_IDS.streamAlerts);
@@ -1233,9 +1204,6 @@ client.on("interactionCreate", async (interaction) => {
       return;
     }
 
-    // ----------------------------
-    // PICK YOUR ROLES BUTTONS
-    // ----------------------------
     if (customId === "roles_gamers") {
       if (member.roles.cache.has(ROLE_IDS.gamers)) {
         await member.roles.remove(ROLE_IDS.gamers); await interaction.reply({ content: "✅ **Gamers** 🎮 role removed!", flags: 64 });
@@ -1272,9 +1240,6 @@ client.on("interactionCreate", async (interaction) => {
       return;
     }
 
-    // ----------------------------
-    // ONBOARDING BUTTONS
-    // ----------------------------
     const parts = customId.split("_");
     const memberId = parts[parts.length - 1];
 
@@ -1382,13 +1347,9 @@ client.on("interactionCreate", async (interaction) => {
   const { customId, user, guild } = interaction;
   const member = await guild.members.fetch(user.id);
 
-  // ----------------------------
-  // BIRTHDAY MODAL
-  // ----------------------------
   if (customId === "birthday_modal_set") {
     const monthRaw = interaction.fields.getTextInputValue("birthday_month").trim();
     const dayRaw = interaction.fields.getTextInputValue("birthday_day").trim();
-
     const month = parseInt(monthRaw);
     const day = parseInt(dayRaw);
 
@@ -1396,7 +1357,6 @@ client.on("interactionCreate", async (interaction) => {
       await interaction.reply({ content: "❌ Invalid month! Please enter a number between 1 and 12.", flags: 64 });
       return;
     }
-
     if (isNaN(day) || day < 1 || day > 31) {
       await interaction.reply({ content: "❌ Invalid day! Please enter a number between 1 and 31.", flags: 64 });
       return;
@@ -1412,14 +1372,10 @@ client.on("interactionCreate", async (interaction) => {
       content: `🎂 Your birthday has been set to **${monthNames[month - 1]} ${day}**! DinoBot will celebrate with you on your special day! 🦕🎉`,
       flags: 64
     });
-
     console.log(`🎂 Birthday set for ${user.tag}: ${month}/${day}`);
     return;
   }
 
-  // ----------------------------
-  // TICKET MODAL
-  // ----------------------------
   if (!customId.startsWith("ticket_modal_")) return;
 
   const withoutPrefix = customId.replace("ticket_modal_", "");
@@ -1496,7 +1452,7 @@ async function logAndCloseTicket(guild, channel, ticketUserId, status, closedBy)
 }
 
 // ----------------------------
-// STEP 2 — INTEREST ROLE SELECTION
+// ONBOARDING STEPS
 // ----------------------------
 async function sendInterestRoleSelection(channel, member) {
   const embed = new EmbedBuilder()
@@ -1524,9 +1480,6 @@ async function sendInterestRoleSelection(channel, member) {
   await channel.send({ embeds: [embed], components: [row] });
 }
 
-// ----------------------------
-// STEP 3 — CONTENT ROLE SELECTION
-// ----------------------------
 async function sendContentRoleSelection(channel, member) {
   const embed = new EmbedBuilder()
     .setTitle("🎮 Content Role")
@@ -1546,9 +1499,6 @@ async function sendContentRoleSelection(channel, member) {
   await channel.send({ embeds: [embed], components: [row] });
 }
 
-// ----------------------------
-// STEP 4 — NOTIFICATION SELECTION
-// ----------------------------
 async function sendNotificationSelection(channel, member) {
   const embed = new EmbedBuilder()
     .setTitle("🔔 Notification Preferences")
@@ -1574,9 +1524,6 @@ async function sendNotificationSelection(channel, member) {
   await channel.send({ embeds: [embed], components: [row] });
 }
 
-// ----------------------------
-// FINISH ONBOARDING
-// ----------------------------
 async function finishOnboarding(channel, member) {
   const embed = new EmbedBuilder()
     .setTitle("🦕 You're all set!")
@@ -1706,9 +1653,18 @@ app.post("/twitch/eventsub", async (req, res) => {
       console.log(`📡 ${broadcaster_user_name} went live`);
       const token = await getTwitchToken();
       const stream = await getStreamInfo(token, broadcaster_user_id);
-      const channel = await client.channels.fetch(process.env.DISCORD_CHANNEL_ID);
-      if (!channel || !stream) return res.status(200).send("Missing data");
+      if (!stream) return res.status(200).send("Missing data");
+
       const thumbnailUrl = stream.thumbnail_url.replace("{width}", "1280").replace("{height}", "720");
+      const isMrBean = broadcaster_user_login.toLowerCase() === MRBEAN_TWITCH_LOGIN.toLowerCase();
+      const targetChannelId = isMrBean ? MRBEAN_ANNOUNCEMENTS_CHANNEL_ID : process.env.DISCORD_CHANNEL_ID;
+      const pingContent = isMrBean
+        ? `<@&${ROLE_IDS.announcements}> 🔴 MrBeanTheDino is LIVE!`
+        : `<@&${ROLE_IDS.streamAlerts}> 🔴 A friend just went live!`;
+
+      const channel = await client.channels.fetch(targetChannelId);
+      if (!channel) return res.status(200).send("Missing channel");
+
       const embed = new EmbedBuilder()
         .setTitle(`🦕 ${broadcaster_user_name} is now LIVE on Twitch!`)
         .setURL(`https://twitch.tv/${broadcaster_user_login}`)
@@ -1717,7 +1673,8 @@ app.post("/twitch/eventsub", async (req, res) => {
         .setColor(0x9146FF)
         .setFooter({ text: "Twitch Live Alert • DinoBot" })
         .setTimestamp();
-      await channel.send({ content: "<@&1480729998339080232> 🔴 A friend just went live!", embeds: [embed] });
+
+      await channel.send({ content: pingContent, embeds: [embed] });
       console.log(`✅ Alert sent for ${broadcaster_user_name}`);
       return res.status(200).send("Notification processed");
     }
@@ -1748,3 +1705,10 @@ app.listen(PORT, () => console.log(`✅ Server running on port ${PORT}`));
     console.error("❌ Discord login failed:", err.message);
   }
 })();
+```
+
+---
+
+Don't forget to update `TWITCH_USER_LOGINS` in Railway to add `mrbeanthedino` at the end:
+```
+livingcorpsetattoo,aniw0lf,bishopisfaded,pistoffy,i_rouge,goevan101new,asteriongm,koyote907,abire08,shadow_bane97,iamfiref1y,mrbeanthedino
