@@ -22,6 +22,7 @@ const PORT = process.env.PORT || 3000;
 const GUILD_ID = "1480080172400250992";
 const WELCOME_CHANNEL_ID = "1480080173469532194";
 const RULES_CHANNEL_ID = "1480080173469532195";
+const INFO_CATEGORY_ID = "1480080173469532193";
 
 const ROLE_IDS = {
   unverified: "1480647122285236438",
@@ -37,6 +38,7 @@ const ROLE_IDS = {
 
 let rulesMessageId = null;
 let onboardingCategoryId = null;
+let pickRolesChannelId = null;
 
 // ----------------------------
 // GLOBAL ERROR LOGGING
@@ -77,6 +79,7 @@ client.once("clientReady", async () => {
   try {
     await setupOnboardingCategory();
     await setupRulesMessage();
+    await setupPickRolesChannel();
     await lockChannelsForUnverified();
     console.log("✅ Onboarding system ready");
   } catch (err) {
@@ -123,6 +126,114 @@ async function setupOnboardingCategory() {
 
   onboardingCategoryId = category.id;
   console.log("✅ Onboarding category created");
+}
+
+// ----------------------------
+// SETUP PICK YOUR ROLES CHANNEL
+// ----------------------------
+async function setupPickRolesChannel() {
+  const guild = await client.guilds.fetch(GUILD_ID);
+  const channels = await guild.channels.fetch();
+
+  const existing = channels.find(
+    c => c.parentId === INFO_CATEGORY_ID && c.name === "pick-your-roles"
+  );
+
+  if (existing) {
+    pickRolesChannelId = existing.id;
+    console.log("ℹ️ Pick your roles channel already exists");
+
+    // Check if bot message already exists
+    const messages = await existing.messages.fetch({ limit: 5 });
+    const botMsg = messages.find(m => m.author.id === client.user.id && m.embeds.length > 0);
+    if (botMsg) return;
+
+    await postPickRolesMessage(existing);
+    return;
+  }
+
+  const channel = await guild.channels.create({
+    name: "pick-your-roles",
+    type: ChannelType.GuildText,
+    parent: INFO_CATEGORY_ID,
+    permissionOverwrites: [
+      {
+        id: guild.roles.everyone.id,
+        deny: [PermissionFlagsBits.ViewChannel]
+      },
+      {
+        id: ROLE_IDS.unverified,
+        deny: [PermissionFlagsBits.ViewChannel]
+      },
+      {
+        id: ROLE_IDS.goofyGoobers,
+        allow: [
+          PermissionFlagsBits.ViewChannel,
+          PermissionFlagsBits.ReadMessageHistory
+        ],
+        deny: [PermissionFlagsBits.SendMessages]
+      }
+    ]
+  });
+
+  pickRolesChannelId = channel.id;
+  console.log("✅ Pick your roles channel created");
+
+  await postPickRolesMessage(channel);
+}
+
+// ----------------------------
+// POST PICK ROLES MESSAGE
+// ----------------------------
+async function postPickRolesMessage(channel) {
+  const embed = new EmbedBuilder()
+    .setTitle("🎭 Pick Your Roles")
+    .setDescription(
+      "Use the buttons below to assign or update your roles anytime!\n\n" +
+      "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n" +
+      "**Optional — Gender Space**\n\n" +
+      "😎 **BROS** — private hangout space for the guys\n" +
+      "💅 **Gurls** — private hangout space for the girls\n\n" +
+      "⚠️ These roles are completely optional and exist in good faith for members who enjoy hanging out in a more relaxed same-gender space. " +
+      "These unlock private hidden channels. You are under no obligation to pick one.\n\n" +
+      "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n" +
+      "**Content Role**\n\n" +
+      "🎮 **Streamer** — You stream on Twitch\n" +
+      "👀 **Viewer** — You watch streams\n\n" +
+      "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n" +
+      "*Clicking a role button will toggle it on or off.*"
+    )
+    .setColor(0x9146FF)
+    .setFooter({ text: "DinoBot • Role Selection" });
+
+  const genderRow = new ActionRowBuilder().addComponents(
+    new ButtonBuilder()
+      .setCustomId("roles_bros")
+      .setLabel("BROS")
+      .setEmoji("😎")
+      .setStyle(ButtonStyle.Primary),
+    new ButtonBuilder()
+      .setCustomId("roles_gurls")
+      .setLabel("Gurls")
+      .setEmoji("💅")
+      .setStyle(ButtonStyle.Primary)
+  );
+
+  const contentRow = new ActionRowBuilder().addComponents(
+    new ButtonBuilder()
+      .setCustomId("roles_streamer")
+      .setLabel("Streamer")
+      .setEmoji("🎮")
+      .setStyle(ButtonStyle.Success),
+    new ButtonBuilder()
+      .setCustomId("roles_viewer")
+      .setLabel("Viewer")
+      .setEmoji("👀")
+      .setStyle(ButtonStyle.Secondary)
+  );
+
+  await channel.send({ embeds: [embed], components: [genderRow, contentRow] });
+  console.log("✅ Pick your roles message posted");
 }
 
 // ----------------------------
@@ -349,20 +460,58 @@ client.on("interactionCreate", async (interaction) => {
   const member = await guild.members.fetch(user.id);
 
   try {
-    // Existing member role buttons
-    if (customId === "role_streamer") {
-      await member.roles.add(ROLE_IDS.streamer);
-      await interaction.reply({ content: "✅ You've been given the **Streamer** 🎮 role!", ephemeral: true });
+
+    // ----------------------------
+    // PICK YOUR ROLES BUTTONS
+    // (toggle on/off for existing members)
+    // ----------------------------
+    if (customId === "roles_bros") {
+      if (member.roles.cache.has(ROLE_IDS.bros)) {
+        await member.roles.remove(ROLE_IDS.bros);
+        await interaction.reply({ content: "✅ **BROS** 😎 role removed!", ephemeral: true });
+      } else {
+        await member.roles.add(ROLE_IDS.bros);
+        await interaction.reply({ content: "✅ **BROS** 😎 role assigned!", ephemeral: true });
+      }
       return;
     }
 
-    if (customId === "role_viewer") {
-      await member.roles.add(ROLE_IDS.viewer);
-      await interaction.reply({ content: "✅ You've been given the **Viewer** 👀 role!", ephemeral: true });
+    if (customId === "roles_gurls") {
+      if (member.roles.cache.has(ROLE_IDS.gurls)) {
+        await member.roles.remove(ROLE_IDS.gurls);
+        await interaction.reply({ content: "✅ **Gurls** 💅 role removed!", ephemeral: true });
+      } else {
+        await member.roles.add(ROLE_IDS.gurls);
+        await interaction.reply({ content: "✅ **Gurls** 💅 role assigned!", ephemeral: true });
+      }
       return;
     }
 
-    // Verify button belongs to this user
+    if (customId === "roles_streamer") {
+      if (member.roles.cache.has(ROLE_IDS.streamer)) {
+        await member.roles.remove(ROLE_IDS.streamer);
+        await interaction.reply({ content: "✅ **Streamer** 🎮 role removed!", ephemeral: true });
+      } else {
+        await member.roles.add(ROLE_IDS.streamer);
+        await interaction.reply({ content: "✅ **Streamer** 🎮 role assigned!", ephemeral: true });
+      }
+      return;
+    }
+
+    if (customId === "roles_viewer") {
+      if (member.roles.cache.has(ROLE_IDS.viewer)) {
+        await member.roles.remove(ROLE_IDS.viewer);
+        await interaction.reply({ content: "✅ **Viewer** 👀 role removed!", ephemeral: true });
+      } else {
+        await member.roles.add(ROLE_IDS.viewer);
+        await interaction.reply({ content: "✅ **Viewer** 👀 role assigned!", ephemeral: true });
+      }
+      return;
+    }
+
+    // ----------------------------
+    // ONBOARDING BUTTONS
+    // ----------------------------
     const parts = customId.split("_");
     const memberId = parts[parts.length - 1];
 
