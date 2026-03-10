@@ -39,14 +39,10 @@ let rulesMessageId = null;
 let onboardingCategoryId = null;
 let pickRolesChannelId = null;
 let notificationChannelId = null;
+let botInfoChannelId = null;
 
-process.on("unhandledRejection", (reason) => {
-  console.error("❌ UNHANDLED REJECTION:", reason);
-});
-
-process.on("uncaughtException", (err) => {
-  console.error("❌ UNCAUGHT EXCEPTION:", err);
-});
+process.on("unhandledRejection", (reason) => console.error("❌ UNHANDLED REJECTION:", reason));
+process.on("uncaughtException", (err) => console.error("❌ UNCAUGHT EXCEPTION:", err));
 
 app.use(express.json({
   verify: (req, res, buf) => { req.rawBody = buf; }
@@ -69,6 +65,7 @@ client.once("clientReady", async () => {
     await setupRulesMessage();
     await setupPickRolesChannel();
     await setupNotificationChannel();
+    await setupBotInfoChannel();
     await lockChannelsForUnverified();
     console.log("✅ Onboarding system ready");
   } catch (err) {
@@ -168,7 +165,7 @@ async function postPickRolesMessage(channel) {
       "These unlock private hidden channels. You are under no obligation to pick one.\n\n" +
       "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n" +
       "**Content Role**\n\n" +
-      "🎮 **Streamer** — You stream on Twitch\n" +
+      "🎙️ **Streamer** — You stream on Twitch\n" +
       "👀 **Viewer** — You watch streams\n\n" +
       "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n" +
       "*Clicking a role button will toggle it on or off.*"
@@ -255,6 +252,100 @@ async function postNotificationMessage(channel) {
 
   await channel.send({ embeds: [embed], components: [row] });
   console.log("✅ Notification settings message posted");
+}
+
+// ----------------------------
+// SETUP BOT INFO CHANNEL
+// ----------------------------
+async function setupBotInfoChannel() {
+  const guild = await client.guilds.fetch(GUILD_ID);
+  const channels = await guild.channels.fetch();
+
+  const existing = channels.find(
+    c => c.parentId === INFO_CATEGORY_ID && c.name === "🤖bot-info"
+  );
+
+  if (existing) {
+    botInfoChannelId = existing.id;
+    console.log("ℹ️ Bot info channel already exists");
+    const messages = await existing.messages.fetch({ limit: 5 });
+    const botMsg = messages.find(m => m.author.id === client.user.id && m.embeds.length > 0);
+    if (botMsg) return;
+    await postBotInfoMessage(existing);
+    return;
+  }
+
+  const channel = await guild.channels.create({
+    name: "🤖bot-info",
+    type: ChannelType.GuildText,
+    parent: INFO_CATEGORY_ID,
+    permissionOverwrites: [
+      { id: guild.roles.everyone.id, deny: [PermissionFlagsBits.ViewChannel] },
+      { id: ROLE_IDS.unverified, deny: [PermissionFlagsBits.ViewChannel] },
+      {
+        id: ROLE_IDS.goofyGoobers,
+        allow: [PermissionFlagsBits.ViewChannel, PermissionFlagsBits.ReadMessageHistory],
+        deny: [PermissionFlagsBits.SendMessages]
+      }
+    ]
+  });
+
+  botInfoChannelId = channel.id;
+  console.log("✅ Bot info channel created");
+  await postBotInfoMessage(channel);
+}
+
+// ----------------------------
+// POST BOT INFO MESSAGE
+// ----------------------------
+async function postBotInfoMessage(channel) {
+  const embed = new EmbedBuilder()
+    .setTitle("🤖 DinoBot — Server Guide")
+    .setDescription(
+      "Hey there! I'm **DinoBot** 🦕 — the custom bot built specifically for **DinoGang**.\n\n" +
+      "Here's everything I do and how to use me.\n\n" +
+
+      "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n" +
+
+      "**⚙️ What DinoBot Does**\n\n" +
+      "🔴 **Twitch Live Alerts** — automatically posts an alert in the stream channel whenever a DinoGang member goes live on Twitch\n\n" +
+      "👋 **Member Onboarding** — when you join, DinoBot creates a private channel just for you to get set up with rules and roles\n\n" +
+      "🎭 **Role Management** — members can self-assign interest, content, and notification roles at any time\n\n" +
+      "🔔 **Notification Controls** — opt in or out of stream alerts and announcements pings whenever you want\n\n" +
+      "🔒 **Channel Lockdown** — new unverified members can only see #welcome and #rules until they complete onboarding\n\n" +
+
+      "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n" +
+
+      "**🗺️ Server Features Overview**\n\n" +
+      "📋 **#rules** — server rules, read-only\n" +
+      "🎭 **#🎭pick-your-roles** — assign or toggle your Gamers, Creative, Streamer, and Viewer roles anytime\n" +
+      "🔔 **#🔔notification-settings** — opt in or out of Stream Alerts and Announcements pings\n" +
+      "🎮 **Gamers** — private channel space for gamers (requires Gamers role)\n" +
+      "🎨 **Creative** — private channel space for creative types (requires Creative role)\n\n" +
+
+      "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n" +
+
+      "**👋 How Onboarding Works**\n\n" +
+      "When you first join the server:\n\n" +
+      "**Step 1** ✅ — Read and accept the server rules\n" +
+      "**Step 2** 🎭 — Pick an optional interest space (Gamers or Creative) or skip\n" +
+      "**Step 3** 🎮 — Pick your content role (Streamer or Viewer)\n" +
+      "**Step 4** 🔔 — Set your notification preferences (Stream Alerts, Announcements, or skip)\n\n" +
+      "Once complete your private onboarding channel self-destructs and you have full access to the server! 🎉\n\n" +
+
+      "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n" +
+
+      "**🛠️ Commands**\n\n" +
+      "*Slash commands coming soon!*\n\n" +
+
+      "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n" +
+      "*DinoBot is a custom bot built for DinoGang 🦕*"
+    )
+    .setColor(0x9146FF)
+    .setFooter({ text: "DinoBot • Server Guide" });
+
+  await channel.send({ embeds: [embed] });
+  console.log("✅ Bot info message posted");
 }
 
 // ----------------------------
@@ -448,7 +539,6 @@ client.on("interactionCreate", async (interaction) => {
   const member = await guild.members.fetch(user.id);
 
   try {
-
     // NOTIFICATION BUTTONS
     if (customId === "notif_stream_alerts") {
       if (member.roles.cache.has(ROLE_IDS.streamAlerts)) {
