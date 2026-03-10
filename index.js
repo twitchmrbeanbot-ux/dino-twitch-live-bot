@@ -1685,30 +1685,4 @@ app.post("/twitch/eventsub", async (req, res) => {
     }
 
     return res.status(200).send("OK");
-  } catch (err) {
-    console.error("❌ Webhook error:", err);
-    return res.status(500).send("Internal Server Error");
-  }
-});
-
-app.listen(PORT, () => console.log(`✅ Server running on port ${PORT}`));
-
-(async () => {
-  try {
-    const token = (process.env.DISCORD_TOKEN || "").trim();
-    await new Promise(resolve => setTimeout(resolve, 3000));
-    await Promise.race([
-      client.login(token),
-      new Promise((_, reject) => setTimeout(() => reject(new Error("Discord login timeout")), 30000))
-    ]);
-  } catch (err) {
-    console.error("❌ Discord login failed:", err.message);
-  }
-})();
-```
-
----
-
-Don't forget to update `TWITCH_USER_LOGINS` in Railway to add `mrbeanthedino` at the end:
-```
-livingcorpsetattoo,aniw0lf,bishopisfaded,pistoffy,i_rouge,goevan101new,asteriongm,koyote907,abire08,shadow_bane97,iamfiref1y,mrbeanthedino
+ 
