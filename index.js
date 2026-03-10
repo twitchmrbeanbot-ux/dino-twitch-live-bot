@@ -14,6 +14,7 @@ const {
   TextInputStyle
 } = require("discord.js");
 const crypto = require("crypto");
+const fs = require("fs");
 const fetch = (...args) => import("node-fetch").then(({ default: f }) => f(...args));
 
 const app = express();
@@ -38,10 +39,23 @@ const ROLE_IDS = {
   admin: "1480083446704509091",
   owner: "1480082698159525909",
   streamAlerts: "1480729998339080232",
-  announcements: "1480730218896556075"
+  announcements: "1480730218896556075",
+  birthday: "1480762436909928550"
 };
 
 const MIN_ACCOUNT_AGE_DAYS = 7;
+const BIRTHDAY_FILE = "./birthdays.json";
+
+// Load birthdays from file
+let birthdays = {};
+if (fs.existsSync(BIRTHDAY_FILE)) {
+  try { birthdays = JSON.parse(fs.readFileSync(BIRTHDAY_FILE, "utf8")); }
+  catch { birthdays = {}; }
+}
+
+function saveBirthdays() {
+  fs.writeFileSync(BIRTHDAY_FILE, JSON.stringify(birthdays, null, 2));
+}
 
 let rulesMessageId = null;
 let onboardingCategoryId = null;
@@ -52,6 +66,8 @@ let supportChannelId = null;
 let modTicketsChannelId = null;
 let staffCategoryId = null;
 let ticketsCategoryId = null;
+let birthdayCategoryId = null;
+let birthdayRegisterChannelId = null;
 
 const openTickets = new Map();
 
@@ -84,6 +100,8 @@ client.once("clientReady", async () => {
     await setupTicketsCategory();
     await setupSupportChannel();
     await setupModTicketsChannel();
+    await setupBirthdayCategory();
+    await setupBirthdayRegisterChannel();
     await lockChannelsForUnverified();
     console.log("✅ All systems ready");
   } catch (err) {
@@ -95,12 +113,258 @@ client.once("clientReady", async () => {
   } catch (err) {
     console.error("❌ Twitch subscription error:", err);
   }
+
+  startBirthdayScheduler();
 });
 
 client.on("error", (err) => console.error("❌ Discord client error:", err));
 client.on("shardDisconnect", (event, id) => console.warn(`⚠️ Shard ${id} disconnected`));
 client.on("shardError", (error, shardId) => console.error(`❌ Shard ${shardId} error:`, error));
 client.on("invalidated", () => console.error("❌ Discord session invalidated"));
+
+// ----------------------------
+// BIRTHDAY SCHEDULER
+// ----------------------------
+function startBirthdayScheduler() {
+  console.log("🎂 Birthday scheduler started");
+  scheduleDailyBirthdayCheck();
+}
+
+function scheduleDailyBirthdayCheck() {
+  const now = new Date();
+  const nextMidnightUTC = new Date(Date.UTC(
+    now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate() + 1, 0, 0, 0
+  ));
+  const msUntilMidnight = nextMidnightUTC - now;
+
+  setTimeout(async () => {
+    await runBirthdayCheck();
+    setInterval(runBirthdayCheck, 24 * 60 * 60 * 1000);
+  }, msUntilMidnight);
+
+  console.log(`⏰ Next birthday check in ${Math.round(msUntilMidnight / 1000 / 60)} minutes`);
+}
+
+async function runBirthdayCheck() {
+  const now = new Date();
+  const todayMonth = now.getUTCMonth() + 1;
+  const todayDay = now.getUTCDate();
+
+  console.log(`🎂 Running birthday check for ${todayMonth}/${todayDay}`);
+
+  try {
+    const guild = await client.guilds.fetch(GUILD_ID);
+
+    // Remove yesterday's birthday roles and channels
+    await cleanupBirthdays(guild);
+
+    // Check today's birthdays
+    for (const [userId, data] of Object.entries(birthdays)) {
+      if (data.month === todayMonth && data.day === todayDay) {
+        await celebrateBirthday(guild, userId);
+      }
+    }
+  } catch (err) {
+    console.error("❌ Birthday check error:", err);
+  }
+}
+
+async function cleanupBirthdays(guild) {
+  try {
+    // Remove birthday role from all members who have it
+    const members = await guild.members.fetch();
+    for (const member of members.values()) {
+      if (member.roles.cache.has(ROLE_IDS.birthday)) {
+        await member.roles.remove(ROLE_IDS.birthday).catch(() => {});
+        console.log(`🎂 Removed birthday role from ${member.user.tag}`);
+      }
+    }
+
+    // Delete any existing birthday channels
+    const channels = await guild.channels.fetch();
+    for (const channel of channels.values()) {
+      if (channel && channel.parentId === birthdayCategoryId && channel.name.startsWith("🎉happy-birthday-")) {
+        await channel.delete().catch(() => {});
+        console.log(`🗑️ Deleted birthday channel: ${channel.name}`);
+      }
+    }
+  } catch (err) {
+    console.error("❌ Birthday cleanup error:", err);
+  }
+}
+
+async function celebrateBirthday(guild, userId) {
+  try {
+    const member = await guild.members.fetch(userId).catch(() => null);
+    if (!member) {
+      console.log(`⚠️ Birthday member not found: ${userId}`);
+      return;
+    }
+
+    console.log(`🎂 It's ${member.user.tag}'s birthday!`);
+
+    // Assign birthday role
+    await member.roles.add(ROLE_IDS.birthday).catch(() => {});
+
+    // Create birthday channel
+    const safeName = member.user.username.toLowerCase().replace(/[^a-z0-9]/g, "");
+    const channel = await guild.channels.create({
+      name: `🎉happy-birthday-${safeName}`,
+      type: ChannelType.GuildText,
+      parent: birthdayCategoryId,
+      permissionOverwrites: [
+        { id: guild.roles.everyone.id, deny: [PermissionFlagsBits.ViewChannel] },
+        { id: ROLE_IDS.unverified, deny: [PermissionFlagsBits.ViewChannel] },
+        {
+          id: ROLE_IDS.goofyGoobers,
+          allow: [PermissionFlagsBits.ViewChannel, PermissionFlagsBits.SendMessages, PermissionFlagsBits.ReadMessageHistory, PermissionFlagsBits.EmbedLinks, PermissionFlagsBits.AttachFiles, PermissionFlagsBits.AddReactions]
+        }
+      ]
+    });
+
+    // Post birthday embed
+    const embed = new EmbedBuilder()
+      .setTitle(`🎂 Happy Birthday, ${member.user.username}! 🎉`)
+      .setDescription(
+        `${member} — today is YOUR day! 🦕🎉\n\n` +
+        "The whole DinoGang is here to celebrate with you!\n\n" +
+        "Drop your birthday wishes below and let's make it a great one! 🎈🎊🥳"
+      )
+      .setThumbnail(member.user.displayAvatarURL({ dynamic: true }))
+      .setColor(0xFF73FA)
+      .setFooter({ text: "DinoBot • Birthday System" })
+      .setTimestamp();
+
+    await channel.send({
+      content: `<@&${ROLE_IDS.announcements}> 🎂 It's someone's birthday!`,
+      embeds: [embed]
+    });
+
+    // DM the birthday member
+    try {
+      await member.send({
+        embeds: [new EmbedBuilder()
+          .setTitle("🎂 Happy Birthday from DinoGang! 🦕")
+          .setDescription(
+            "Hey! The whole crew wants to wish you a **Happy Birthday**! 🎉\n\n" +
+            "Head to the server — there's a special birthday channel just for you today! 🎈\n\n" +
+            "Hope your day is amazing! 🥳"
+          )
+          .setColor(0xFF73FA)
+          .setFooter({ text: "DinoBot • Happy Birthday! 🎂" })]
+      });
+    } catch { /* DMs disabled */ }
+
+    console.log(`✅ Birthday celebrated for ${member.user.tag}`);
+  } catch (err) {
+    console.error(`❌ Error celebrating birthday for ${userId}:`, err);
+  }
+}
+
+// ----------------------------
+// SETUP BIRTHDAY CATEGORY
+// ----------------------------
+async function setupBirthdayCategory() {
+  const guild = await client.guilds.fetch(GUILD_ID);
+  const channels = await guild.channels.fetch();
+  const existing = channels.find(c => c.type === ChannelType.GuildCategory && c.name === "BIRTHDAYS");
+  if (existing) { birthdayCategoryId = existing.id; console.log("ℹ️ Birthdays category already exists"); return; }
+
+  const category = await guild.channels.create({
+    name: "BIRTHDAYS",
+    type: ChannelType.GuildCategory,
+    permissionOverwrites: [
+      { id: guild.roles.everyone.id, deny: [PermissionFlagsBits.ViewChannel] },
+      {
+        id: ROLE_IDS.goofyGoobers,
+        allow: [PermissionFlagsBits.ViewChannel, PermissionFlagsBits.SendMessages, PermissionFlagsBits.ReadMessageHistory]
+      }
+    ]
+  });
+
+  birthdayCategoryId = category.id;
+  console.log("✅ Birthdays category created");
+}
+
+// ----------------------------
+// SETUP BIRTHDAY REGISTER CHANNEL
+// ----------------------------
+async function setupBirthdayRegisterChannel() {
+  const guild = await client.guilds.fetch(GUILD_ID);
+  const channels = await guild.channels.fetch();
+
+  const existing = channels.find(
+    c => c.parentId === INFO_CATEGORY_ID && c.name === "🎂birthday-register"
+  );
+
+  if (existing) {
+    birthdayRegisterChannelId = existing.id;
+    console.log("ℹ️ Birthday register channel already exists");
+    const messages = await existing.messages.fetch({ limit: 5 });
+    const botMsg = messages.find(m => m.author.id === client.user.id && m.embeds.length > 0);
+    if (botMsg) return;
+    await postBirthdayRegisterMessage(existing);
+    return;
+  }
+
+  const channel = await guild.channels.create({
+    name: "🎂birthday-register",
+    type: ChannelType.GuildText,
+    parent: INFO_CATEGORY_ID,
+    permissionOverwrites: [
+      { id: guild.roles.everyone.id, deny: [PermissionFlagsBits.ViewChannel] },
+      { id: ROLE_IDS.unverified, deny: [PermissionFlagsBits.ViewChannel] },
+      {
+        id: ROLE_IDS.goofyGoobers,
+        allow: [PermissionFlagsBits.ViewChannel, PermissionFlagsBits.ReadMessageHistory],
+        deny: [PermissionFlagsBits.SendMessages]
+      }
+    ]
+  });
+
+  birthdayRegisterChannelId = channel.id;
+  console.log("✅ Birthday register channel created");
+  await postBirthdayRegisterMessage(channel);
+}
+
+// ----------------------------
+// POST BIRTHDAY REGISTER MESSAGE
+// ----------------------------
+async function postBirthdayRegisterMessage(channel) {
+  const embed = new EmbedBuilder()
+    .setTitle("🎂 Birthday Register")
+    .setDescription(
+      "Want DinoBot to celebrate your birthday? Register it below! 🦕\n\n" +
+      "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n" +
+      "🎉 **What happens on your birthday:**\n\n" +
+      "- A private birthday channel is created just for you\n" +
+      "- The whole server can come wish you happy birthday\n" +
+      "- You get a special 🎂 Birthday role for the day\n" +
+      "- DinoBot will DM you happy birthday\n" +
+      "- Channel and role are removed at midnight 🕛\n\n" +
+      "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n" +
+      "🔒 **Privacy:** Only your month and day are stored — no year is ever collected.\n\n" +
+      "*Use the buttons below to set or remove your birthday.*"
+    )
+    .setColor(0xFF73FA)
+    .setFooter({ text: "DinoBot • Birthday System" });
+
+  const row = new ActionRowBuilder().addComponents(
+    new ButtonBuilder()
+      .setCustomId("birthday_set")
+      .setLabel("Set My Birthday")
+      .setEmoji("🎂")
+      .setStyle(ButtonStyle.Success),
+    new ButtonBuilder()
+      .setCustomId("birthday_remove")
+      .setLabel("Remove My Birthday")
+      .setEmoji("🗑️")
+      .setStyle(ButtonStyle.Danger)
+  );
+
+  await channel.send({ embeds: [embed], components: [row] });
+  console.log("✅ Birthday register message posted");
+}
 
 // ----------------------------
 // SETUP ONBOARDING CATEGORY
@@ -409,12 +673,14 @@ async function postBotInfoMessage(channel) {
       "🔒 **Channel Lockdown** — new members can only see #welcome and #rules until onboarding is complete\n\n" +
       "🎟️ **Ticket System** — submit private tickets to the mod team for reports, feedback, suggestions, and more\n\n" +
       "⚠️ **Account Age Filter** — accounts under 7 days old are flagged and reviewed by mods\n\n" +
+      "🎂 **Birthday System** — register your birthday and get your own celebration channel for the day\n\n" +
       "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n" +
       "**🗺️ Server Features**\n\n" +
       "📋 `#rules` — server rules, read-only\n" +
       "🎭 `#🎭pick-your-roles` — toggle your Gamers, Creative, Streamer, and Viewer roles\n" +
       "🔔 `#🔔notification-settings` — opt in or out of Stream Alerts and Announcements\n" +
       "🎟️ `#🎟️support` — open a private ticket with the mod team\n" +
+      "🎂 `#🎂birthday-register` — register your birthday for a special celebration\n" +
       "🎮 **Gamers** — private space for gamers *(requires Gamers role)*\n" +
       "🎨 **Creative** — private space for creative types *(requires Creative role)*\n\n" +
       "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n" +
@@ -436,6 +702,13 @@ async function postBotInfoMessage(channel) {
       "A pop-up form will appear for you to describe your issue before submitting.\n" +
       "⚠️ You can only have **one open ticket at a time**. Once resolved you can open another.\n" +
       "All tickets are **private** — only you and the mod team can see them.\n\n" +
+      "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n" +
+      "**🎂 How the Birthday System Works**\n\n" +
+      "Head to `#🎂birthday-register` and click **Set My Birthday**:\n\n" +
+      "- Enter your birth month and day *(no year collected)*\n" +
+      "- On your birthday DinoBot creates a special celebration channel just for you\n" +
+      "- The whole server can come wish you happy birthday! 🎉\n" +
+      "- Your birthday role and channel are removed at midnight\n\n" +
       "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n" +
       "**🛠️ Commands**\n\n" +
       "*Slash commands coming soon!*\n\n" +
@@ -464,6 +737,8 @@ async function lockChannelsForUnverified() {
     if (channel.parentId === staffCategoryId) continue;
     if (channel.id === ticketsCategoryId) continue;
     if (channel.parentId === ticketsCategoryId) continue;
+    if (channel.id === birthdayCategoryId) continue;
+    if (channel.parentId === birthdayCategoryId) continue;
 
     if (channel.id === WELCOME_CHANNEL_ID || channel.id === RULES_CHANNEL_ID) {
       await channel.permissionOverwrites.edit(ROLE_IDS.unverified, {
@@ -536,7 +811,6 @@ async function setupRulesMessage() {
 // ----------------------------
 async function checkAccountAge(member) {
   const accountAgeDays = (Date.now() - member.user.createdTimestamp) / (1000 * 60 * 60 * 24);
-
   if (accountAgeDays >= MIN_ACCOUNT_AGE_DAYS) return;
 
   const ageDisplay = accountAgeDays < 1
@@ -566,16 +840,8 @@ async function checkAccountAge(member) {
       .setFooter({ text: "DinoBot • Account Age Filter" });
 
     const row = new ActionRowBuilder().addComponents(
-      new ButtonBuilder()
-        .setCustomId(`agecheck_approve_${member.id}`)
-        .setLabel("Approve")
-        .setEmoji("✅")
-        .setStyle(ButtonStyle.Success),
-      new ButtonBuilder()
-        .setCustomId(`agecheck_kick_${member.id}`)
-        .setLabel("Kick")
-        .setEmoji("🦵")
-        .setStyle(ButtonStyle.Danger)
+      new ButtonBuilder().setCustomId(`agecheck_approve_${member.id}`).setLabel("Approve").setEmoji("✅").setStyle(ButtonStyle.Success),
+      new ButtonBuilder().setCustomId(`agecheck_kick_${member.id}`).setLabel("Kick").setEmoji("🦵").setStyle(ButtonStyle.Danger)
     );
 
     await modLogsChannel.send({
@@ -583,7 +849,6 @@ async function checkAccountAge(member) {
       embeds: [embed],
       components: [row]
     });
-
   } catch (err) {
     console.error("❌ Error sending account age alert:", err);
   }
@@ -741,10 +1006,8 @@ async function createTicketChannel(guild, member, ticketType, anonymous, descrip
     .setFooter({ text: `DinoBot • Ticket System • ${typeLabels[ticketType]}` });
 
   const row = new ActionRowBuilder().addComponents(
-    new ButtonBuilder()
-      .setCustomId(`ticket_resolve_${member.id}`).setLabel("Resolve").setEmoji("✅").setStyle(ButtonStyle.Success),
-    new ButtonBuilder()
-      .setCustomId(`ticket_close_${member.id}`).setLabel("Close Without Resolving").setEmoji("🗑️").setStyle(ButtonStyle.Danger)
+    new ButtonBuilder().setCustomId(`ticket_resolve_${member.id}`).setLabel("Resolve").setEmoji("✅").setStyle(ButtonStyle.Success),
+    new ButtonBuilder().setCustomId(`ticket_close_${member.id}`).setLabel("Close Without Resolving").setEmoji("🗑️").setStyle(ButtonStyle.Danger)
   );
 
   const staffPing = `<@&${ROLE_IDS.mods}>`;
@@ -807,7 +1070,6 @@ client.on("interactionCreate", async (interaction) => {
           await targetMember.kick("Account too new — under 7 days old");
           console.log(`🦵 Kicked new account: ${targetUserId}`);
         }
-
         await interaction.update({
           embeds: [EmbedBuilder.from(interaction.message.embeds[0])
             .setColor(0xED4245)
@@ -819,6 +1081,49 @@ client.on("interactionCreate", async (interaction) => {
         console.error("❌ Error kicking member:", err);
         await interaction.reply({ content: "❌ Failed to kick member. Do I have Kick Members permission?", flags: 64 });
       }
+      return;
+    }
+
+    // ----------------------------
+    // BIRTHDAY BUTTONS
+    // ----------------------------
+    if (customId === "birthday_set") {
+      const modal = new ModalBuilder()
+        .setCustomId("birthday_modal_set")
+        .setTitle("🎂 Set Your Birthday");
+
+      const monthInput = new TextInputBuilder()
+        .setCustomId("birthday_month")
+        .setLabel("Birth Month (1-12)")
+        .setStyle(TextInputStyle.Short)
+        .setPlaceholder("e.g. 3 for March, 12 for December")
+        .setMinLength(1).setMaxLength(2).setRequired(true);
+
+      const dayInput = new TextInputBuilder()
+        .setCustomId("birthday_day")
+        .setLabel("Birth Day (1-31)")
+        .setStyle(TextInputStyle.Short)
+        .setPlaceholder("e.g. 15")
+        .setMinLength(1).setMaxLength(2).setRequired(true);
+
+      modal.addComponents(
+        new ActionRowBuilder().addComponents(monthInput),
+        new ActionRowBuilder().addComponents(dayInput)
+      );
+
+      await interaction.showModal(modal);
+      return;
+    }
+
+    if (customId === "birthday_remove") {
+      if (!birthdays[user.id]) {
+        await interaction.reply({ content: "❌ You don't have a birthday registered!", flags: 64 });
+        return;
+      }
+      delete birthdays[user.id];
+      saveBirthdays();
+      await interaction.reply({ content: "🗑️ Your birthday has been removed.", flags: 64 });
+      console.log(`🗑️ Birthday removed for ${user.tag}`);
       return;
     }
 
@@ -855,18 +1160,15 @@ client.on("interactionCreate", async (interaction) => {
           .setCustomId("reported_user").setLabel("Who are you reporting?")
           .setStyle(TextInputStyle.Short).setPlaceholder("Username of the person you're reporting")
           .setMinLength(1).setMaxLength(100).setRequired(true);
-
         const locationInput = new TextInputBuilder()
           .setCustomId("ticket_location").setLabel("Where did this happen?")
           .setStyle(TextInputStyle.Short).setPlaceholder("e.g. #general, voice chat, DMs")
           .setMinLength(1).setMaxLength(100).setRequired(true);
-
         const descriptionInput = new TextInputBuilder()
           .setCustomId("ticket_description").setLabel("What happened?")
           .setStyle(TextInputStyle.Paragraph)
           .setPlaceholder("Describe what happened in as much detail as possible. Your identity will remain anonymous.")
           .setMinLength(10).setMaxLength(1000).setRequired(true);
-
         modal.addComponents(
           new ActionRowBuilder().addComponents(reportedUserInput),
           new ActionRowBuilder().addComponents(locationInput),
@@ -879,12 +1181,10 @@ client.on("interactionCreate", async (interaction) => {
           question: "What would you like to ask the mod team?",
           appeal: "Describe your situation and why you'd like to appeal..."
         };
-
         const descriptionInput = new TextInputBuilder()
           .setCustomId("ticket_description").setLabel("Description")
           .setStyle(TextInputStyle.Paragraph).setPlaceholder(placeholders[ticketMatch])
           .setMinLength(10).setMaxLength(1000).setRequired(true);
-
         modal.addComponents(new ActionRowBuilder().addComponents(descriptionInput));
       }
 
@@ -1078,10 +1378,49 @@ client.on("interactionCreate", async (interaction) => {
 // ----------------------------
 client.on("interactionCreate", async (interaction) => {
   if (!interaction.isModalSubmit()) return;
-  if (!interaction.customId.startsWith("ticket_modal_")) return;
 
   const { customId, user, guild } = interaction;
   const member = await guild.members.fetch(user.id);
+
+  // ----------------------------
+  // BIRTHDAY MODAL
+  // ----------------------------
+  if (customId === "birthday_modal_set") {
+    const monthRaw = interaction.fields.getTextInputValue("birthday_month").trim();
+    const dayRaw = interaction.fields.getTextInputValue("birthday_day").trim();
+
+    const month = parseInt(monthRaw);
+    const day = parseInt(dayRaw);
+
+    if (isNaN(month) || month < 1 || month > 12) {
+      await interaction.reply({ content: "❌ Invalid month! Please enter a number between 1 and 12.", flags: 64 });
+      return;
+    }
+
+    if (isNaN(day) || day < 1 || day > 31) {
+      await interaction.reply({ content: "❌ Invalid day! Please enter a number between 1 and 31.", flags: 64 });
+      return;
+    }
+
+    birthdays[user.id] = { month, day };
+    saveBirthdays();
+
+    const monthNames = ["January", "February", "March", "April", "May", "June",
+      "July", "August", "September", "October", "November", "December"];
+
+    await interaction.reply({
+      content: `🎂 Your birthday has been set to **${monthNames[month - 1]} ${day}**! DinoBot will celebrate with you on your special day! 🦕🎉`,
+      flags: 64
+    });
+
+    console.log(`🎂 Birthday set for ${user.tag}: ${month}/${day}`);
+    return;
+  }
+
+  // ----------------------------
+  // TICKET MODAL
+  // ----------------------------
+  if (!customId.startsWith("ticket_modal_")) return;
 
   const withoutPrefix = customId.replace("ticket_modal_", "");
   const ticketType = withoutPrefix.split("_")[0];
