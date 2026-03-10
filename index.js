@@ -23,6 +23,9 @@ const GUILD_ID = "1480080172400250992";
 const WELCOME_CHANNEL_ID = "1480080173469532194";
 const RULES_CHANNEL_ID = "1480080173469532195";
 const INFO_CATEGORY_ID = "1480080173469532193";
+const MOD_LOGS_CHANNEL_ID = "1480080173469532199";
+const SPAM_LOGS_CHANNEL_ID = "1480080173868257333";
+const MOD_CHAT_CHANNEL_ID = "1480080173868257334";
 
 const ROLE_IDS = {
   unverified: "1480647122285236438",
@@ -37,6 +40,8 @@ const ROLE_IDS = {
   streamAlerts: "1480729998339080232",
   announcements: "1480730218896556075"
 };
+
+const MIN_ACCOUNT_AGE_DAYS = 7;
 
 let rulesMessageId = null;
 let onboardingCategoryId = null;
@@ -403,6 +408,7 @@ async function postBotInfoMessage(channel) {
       "🔔 **Notification Controls** — opt in or out of stream alerts and announcements pings whenever you want\n\n" +
       "🔒 **Channel Lockdown** — new members can only see #welcome and #rules until onboarding is complete\n\n" +
       "🎟️ **Ticket System** — submit private tickets to the mod team for reports, feedback, suggestions, and more\n\n" +
+      "⚠️ **Account Age Filter** — accounts under 7 days old are flagged and reviewed by mods\n\n" +
       "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n" +
       "**🗺️ Server Features**\n\n" +
       "📋 `#rules` — server rules, read-only\n" +
@@ -526,6 +532,64 @@ async function setupRulesMessage() {
 }
 
 // ----------------------------
+// ACCOUNT AGE CHECK
+// ----------------------------
+async function checkAccountAge(member) {
+  const accountAgeDays = (Date.now() - member.user.createdTimestamp) / (1000 * 60 * 60 * 24);
+
+  if (accountAgeDays >= MIN_ACCOUNT_AGE_DAYS) return;
+
+  const ageDisplay = accountAgeDays < 1
+    ? `${Math.floor(accountAgeDays * 24)} hours`
+    : `${Math.floor(accountAgeDays)} days`;
+
+  console.log(`⚠️ New account flagged: ${member.user.tag} (${ageDisplay} old)`);
+
+  try {
+    const modLogsChannel = await client.channels.fetch(MOD_LOGS_CHANNEL_ID);
+    if (!modLogsChannel) return;
+
+    const embed = new EmbedBuilder()
+      .setTitle("⚠️ New Account Flagged")
+      .setDescription(
+        `A new member joined with a suspiciously new account.\n\n` +
+        `**Member:** ${member} (${member.user.tag})\n` +
+        `**Account Created:** <t:${Math.floor(member.user.createdTimestamp / 1000)}:F>\n` +
+        `**Account Age:** ${ageDisplay}\n` +
+        `**Minimum Required:** ${MIN_ACCOUNT_AGE_DAYS} days\n\n` +
+        `━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n` +
+        `*Use the buttons below to approve or kick this member.*`
+      )
+      .setThumbnail(member.user.displayAvatarURL({ dynamic: true }))
+      .setColor(0xFFA500)
+      .setTimestamp()
+      .setFooter({ text: "DinoBot • Account Age Filter" });
+
+    const row = new ActionRowBuilder().addComponents(
+      new ButtonBuilder()
+        .setCustomId(`agecheck_approve_${member.id}`)
+        .setLabel("Approve")
+        .setEmoji("✅")
+        .setStyle(ButtonStyle.Success),
+      new ButtonBuilder()
+        .setCustomId(`agecheck_kick_${member.id}`)
+        .setLabel("Kick")
+        .setEmoji("🦵")
+        .setStyle(ButtonStyle.Danger)
+    );
+
+    await modLogsChannel.send({
+      content: `<@&${ROLE_IDS.mods}> ⚠️ New account flagged!`,
+      embeds: [embed],
+      components: [row]
+    });
+
+  } catch (err) {
+    console.error("❌ Error sending account age alert:", err);
+  }
+}
+
+// ----------------------------
 // WELCOME NEW MEMBERS
 // ----------------------------
 client.on("guildMemberAdd", async (member) => {
@@ -549,6 +613,7 @@ client.on("guildMemberAdd", async (member) => {
       .setTimestamp();
 
     await welcomeChannel.send({ embeds: [welcomeEmbed] });
+    await checkAccountAge(member);
     await createOnboardingChannel(guild, member);
   } catch (err) {
     console.error("❌ Error handling new member:", err);
@@ -622,7 +687,7 @@ async function createOnboardingChannel(guild, member) {
 // ----------------------------
 // CREATE TICKET CHANNEL
 // ----------------------------
-async function createTicketChannel(guild, member, ticketType, anonymous, description = null, location = null) {
+async function createTicketChannel(guild, member, ticketType, anonymous, description = null, location = null, reportedUser = null) {
   const safeName = member.user.username.toLowerCase().replace(/[^a-z0-9]/g, "");
   const channelName = `ticket-${safeName}`;
 
@@ -663,8 +728,9 @@ async function createTicketChannel(guild, member, ticketType, anonymous, descrip
     ? "🔒 **This ticket is anonymous.** The mod team cannot see who submitted it.\n\n"
     : `👤 **Submitted by:** ${member}\n\n`;
 
+  if (reportedUser) descriptionText += `**Reported User:** ${reportedUser}\n\n`;
+  if (location) descriptionText += `**Where did this happen?** ${location}\n\n`;
   if (description) descriptionText += `**Description:**\n${description}\n\n`;
-  if (location) descriptionText += `**Where did this happen?**\n${location}\n\n`;
   descriptionText += "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n*Use the buttons below to close this ticket when resolved.*";
 
   const embed = new EmbedBuilder()
@@ -704,6 +770,59 @@ client.on("interactionCreate", async (interaction) => {
   try {
 
     // ----------------------------
+    // ACCOUNT AGE CHECK BUTTONS
+    // ----------------------------
+    if (customId.startsWith("agecheck_approve_")) {
+      const targetUserId = customId.replace("agecheck_approve_", "");
+      await interaction.update({
+        embeds: [EmbedBuilder.from(interaction.message.embeds[0])
+          .setColor(0x57F287)
+          .setTitle("✅ Member Approved")
+          .setFooter({ text: `Approved by ${interaction.user.tag} • DinoBot • Account Age Filter` })],
+        components: []
+      });
+      console.log(`✅ Account age approved: ${targetUserId} by ${interaction.user.tag}`);
+      return;
+    }
+
+    if (customId.startsWith("agecheck_kick_")) {
+      const targetUserId = customId.replace("agecheck_kick_", "");
+      try {
+        const targetMember = await guild.members.fetch(targetUserId).catch(() => null);
+        if (targetMember) {
+          try {
+            await targetMember.send({
+              embeds: [new EmbedBuilder()
+                .setTitle("👋 You were removed from DinoGang")
+                .setDescription(
+                  "Your account is too new to join this server.\n\n" +
+                  `**Minimum account age required:** ${MIN_ACCOUNT_AGE_DAYS} days\n\n` +
+                  "This is an automatic security measure to protect our community. " +
+                  "Please try again once your account is older. 🦕"
+                )
+                .setColor(0xED4245)
+                .setFooter({ text: "DinoGang • Account Age Filter" })]
+            });
+          } catch { /* DMs disabled */ }
+          await targetMember.kick("Account too new — under 7 days old");
+          console.log(`🦵 Kicked new account: ${targetUserId}`);
+        }
+
+        await interaction.update({
+          embeds: [EmbedBuilder.from(interaction.message.embeds[0])
+            .setColor(0xED4245)
+            .setTitle("🦵 Member Kicked")
+            .setFooter({ text: `Kicked by ${interaction.user.tag} • DinoBot • Account Age Filter` })],
+          components: []
+        });
+      } catch (err) {
+        console.error("❌ Error kicking member:", err);
+        await interaction.reply({ content: "❌ Failed to kick member. Do I have Kick Members permission?", flags: 64 });
+      }
+      return;
+    }
+
+    // ----------------------------
     // TICKET BUTTONS — show modal
     // ----------------------------
     const ticketTypes = ["report", "feedback", "suggestion", "question", "appeal"];
@@ -732,33 +851,21 @@ client.on("interactionCreate", async (interaction) => {
         .setTitle(modalTitles[ticketMatch]);
 
       if (ticketMatch === "report") {
-        // Report modal — 3 fields
         const reportedUserInput = new TextInputBuilder()
-          .setCustomId("reported_user")
-          .setLabel("Who are you reporting?")
-          .setStyle(TextInputStyle.Short)
-          .setPlaceholder("Username of the person you're reporting")
-          .setMinLength(1)
-          .setMaxLength(100)
-          .setRequired(true);
+          .setCustomId("reported_user").setLabel("Who are you reporting?")
+          .setStyle(TextInputStyle.Short).setPlaceholder("Username of the person you're reporting")
+          .setMinLength(1).setMaxLength(100).setRequired(true);
 
         const locationInput = new TextInputBuilder()
-          .setCustomId("ticket_location")
-          .setLabel("Where did this happen?")
-          .setStyle(TextInputStyle.Short)
-          .setPlaceholder("e.g. #general, voice chat, DMs")
-          .setMinLength(1)
-          .setMaxLength(100)
-          .setRequired(true);
+          .setCustomId("ticket_location").setLabel("Where did this happen?")
+          .setStyle(TextInputStyle.Short).setPlaceholder("e.g. #general, voice chat, DMs")
+          .setMinLength(1).setMaxLength(100).setRequired(true);
 
         const descriptionInput = new TextInputBuilder()
-          .setCustomId("ticket_description")
-          .setLabel("What happened?")
+          .setCustomId("ticket_description").setLabel("What happened?")
           .setStyle(TextInputStyle.Paragraph)
           .setPlaceholder("Describe what happened in as much detail as possible. Your identity will remain anonymous.")
-          .setMinLength(10)
-          .setMaxLength(1000)
-          .setRequired(true);
+          .setMinLength(10).setMaxLength(1000).setRequired(true);
 
         modal.addComponents(
           new ActionRowBuilder().addComponents(reportedUserInput),
@@ -766,7 +873,6 @@ client.on("interactionCreate", async (interaction) => {
           new ActionRowBuilder().addComponents(descriptionInput)
         );
       } else {
-        // All other tickets — single description field
         const placeholders = {
           feedback: "Share your feedback about the server...",
           suggestion: "What would you like to suggest?",
@@ -775,13 +881,9 @@ client.on("interactionCreate", async (interaction) => {
         };
 
         const descriptionInput = new TextInputBuilder()
-          .setCustomId("ticket_description")
-          .setLabel("Description")
-          .setStyle(TextInputStyle.Paragraph)
-          .setPlaceholder(placeholders[ticketMatch])
-          .setMinLength(10)
-          .setMaxLength(1000)
-          .setRequired(true);
+          .setCustomId("ticket_description").setLabel("Description")
+          .setStyle(TextInputStyle.Paragraph).setPlaceholder(placeholders[ticketMatch])
+          .setMinLength(10).setMaxLength(1000).setRequired(true);
 
         modal.addComponents(new ActionRowBuilder().addComponents(descriptionInput));
       }
@@ -836,44 +938,36 @@ client.on("interactionCreate", async (interaction) => {
     // ----------------------------
     if (customId === "roles_gamers") {
       if (member.roles.cache.has(ROLE_IDS.gamers)) {
-        await member.roles.remove(ROLE_IDS.gamers);
-        await interaction.reply({ content: "✅ **Gamers** 🎮 role removed!", flags: 64 });
+        await member.roles.remove(ROLE_IDS.gamers); await interaction.reply({ content: "✅ **Gamers** 🎮 role removed!", flags: 64 });
       } else {
-        await member.roles.add(ROLE_IDS.gamers);
-        await interaction.reply({ content: "✅ **Gamers** 🎮 role assigned!", flags: 64 });
+        await member.roles.add(ROLE_IDS.gamers); await interaction.reply({ content: "✅ **Gamers** 🎮 role assigned!", flags: 64 });
       }
       return;
     }
 
     if (customId === "roles_creative") {
       if (member.roles.cache.has(ROLE_IDS.creative)) {
-        await member.roles.remove(ROLE_IDS.creative);
-        await interaction.reply({ content: "✅ **Creative** 🎨 role removed!", flags: 64 });
+        await member.roles.remove(ROLE_IDS.creative); await interaction.reply({ content: "✅ **Creative** 🎨 role removed!", flags: 64 });
       } else {
-        await member.roles.add(ROLE_IDS.creative);
-        await interaction.reply({ content: "✅ **Creative** 🎨 role assigned!", flags: 64 });
+        await member.roles.add(ROLE_IDS.creative); await interaction.reply({ content: "✅ **Creative** 🎨 role assigned!", flags: 64 });
       }
       return;
     }
 
     if (customId === "roles_streamer") {
       if (member.roles.cache.has(ROLE_IDS.streamer)) {
-        await member.roles.remove(ROLE_IDS.streamer);
-        await interaction.reply({ content: "✅ **Streamer** 🎙️ role removed!", flags: 64 });
+        await member.roles.remove(ROLE_IDS.streamer); await interaction.reply({ content: "✅ **Streamer** 🎙️ role removed!", flags: 64 });
       } else {
-        await member.roles.add(ROLE_IDS.streamer);
-        await interaction.reply({ content: "✅ **Streamer** 🎙️ role assigned!", flags: 64 });
+        await member.roles.add(ROLE_IDS.streamer); await interaction.reply({ content: "✅ **Streamer** 🎙️ role assigned!", flags: 64 });
       }
       return;
     }
 
     if (customId === "roles_viewer") {
       if (member.roles.cache.has(ROLE_IDS.viewer)) {
-        await member.roles.remove(ROLE_IDS.viewer);
-        await interaction.reply({ content: "✅ **Viewer** 👀 role removed!", flags: 64 });
+        await member.roles.remove(ROLE_IDS.viewer); await interaction.reply({ content: "✅ **Viewer** 👀 role removed!", flags: 64 });
       } else {
-        await member.roles.add(ROLE_IDS.viewer);
-        await interaction.reply({ content: "✅ **Viewer** 👀 role assigned!", flags: 64 });
+        await member.roles.add(ROLE_IDS.viewer); await interaction.reply({ content: "✅ **Viewer** 👀 role assigned!", flags: 64 });
       }
       return;
     }
@@ -894,11 +988,7 @@ client.on("interactionCreate", async (interaction) => {
       await member.roles.add(ROLE_IDS.goofyGoobers);
       console.log(`✅ Rules accepted: ${user.tag}`);
       await interaction.update({
-        embeds: [new EmbedBuilder()
-          .setTitle("✅ Rules Accepted!")
-          .setDescription("You're verified! Now let's get your roles set up.")
-          .setColor(0x57F287)
-          .setFooter({ text: "Step 1 of 4 — Complete ✅" })],
+        embeds: [new EmbedBuilder().setTitle("✅ Rules Accepted!").setDescription("You're verified! Now let's get your roles set up.").setColor(0x57F287).setFooter({ text: "Step 1 of 4 — Complete ✅" })],
         components: []
       });
       await sendInterestRoleSelection(interaction.channel, member);
@@ -993,49 +1083,32 @@ client.on("interactionCreate", async (interaction) => {
   const { customId, user, guild } = interaction;
   const member = await guild.members.fetch(user.id);
 
-  // Parse customId: ticket_modal_report_USERID or ticket_modal_feedback_USERID
   const withoutPrefix = customId.replace("ticket_modal_", "");
   const ticketType = withoutPrefix.split("_")[0];
   const anonymous = ticketType === "report";
 
   const description = interaction.fields.getTextInputValue("ticket_description");
-  const location = ticketType === "report"
-    ? interaction.fields.getTextInputValue("ticket_location")
-    : null;
-  const reportedUser = ticketType === "report"
-    ? interaction.fields.getTextInputValue("reported_user")
-    : null;
+  const location = ticketType === "report" ? interaction.fields.getTextInputValue("ticket_location") : null;
+  const reportedUser = ticketType === "report" ? interaction.fields.getTextInputValue("reported_user") : null;
 
   try {
     if (openTickets.has(user.id)) {
       const existingChannelId = openTickets.get(user.id);
-      await interaction.reply({
-        content: `❌ You already have an open ticket! <#${existingChannelId}>`,
-        flags: 64
-      });
+      await interaction.reply({ content: `❌ You already have an open ticket! <#${existingChannelId}>`, flags: 64 });
       return;
     }
 
     const ticketChannel = await createTicketChannel(guild, member, ticketType, anonymous, description, location, reportedUser);
 
     if (!ticketChannel) {
-      await interaction.reply({
-        content: "❌ You already have an open ticket! Please resolve it before opening a new one.",
-        flags: 64
-      });
+      await interaction.reply({ content: "❌ You already have an open ticket! Please resolve it before opening a new one.", flags: 64 });
       return;
     }
 
     if (anonymous) {
-      await interaction.reply({
-        content: "🔒 Your anonymous report has been submitted. The mod team will handle it shortly.",
-        flags: 64
-      });
+      await interaction.reply({ content: "🔒 Your anonymous report has been submitted. The mod team will handle it shortly.", flags: 64 });
     } else {
-      await interaction.reply({
-        content: `✅ Your ticket has been created! <#${ticketChannel.id}>`,
-        flags: 64
-      });
+      await interaction.reply({ content: `✅ Your ticket has been created! <#${ticketChannel.id}>`, flags: 64 });
     }
   } catch (err) {
     console.error("❌ Modal submit error:", err);
