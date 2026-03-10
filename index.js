@@ -8,7 +8,10 @@ const {
   ActionRowBuilder,
   ButtonBuilder,
   ButtonStyle,
-  ChannelType
+  ChannelType,
+  ModalBuilder,
+  TextInputBuilder,
+  TextInputStyle
 } = require("discord.js");
 const crypto = require("crypto");
 const fetch = (...args) => import("node-fetch").then(({ default: f }) => f(...args));
@@ -45,7 +48,7 @@ let modTicketsChannelId = null;
 let staffCategoryId = null;
 let ticketsCategoryId = null;
 
-const openTickets = new Map(); // userId -> channelId
+const openTickets = new Map();
 
 process.on("unhandledRejection", (reason) => console.error("❌ UNHANDLED REJECTION:", reason));
 process.on("uncaughtException", (err) => console.error("❌ UNCAUGHT EXCEPTION:", err));
@@ -101,19 +104,11 @@ async function setupOnboardingCategory() {
   const guild = await client.guilds.fetch(GUILD_ID);
   const channels = await guild.channels.fetch();
   const existing = channels.find(c => c.type === ChannelType.GuildCategory && c.name === "ONBOARDING");
-
-  if (existing) {
-    onboardingCategoryId = existing.id;
-    console.log("ℹ️ Onboarding category already exists");
-    return;
-  }
-
+  if (existing) { onboardingCategoryId = existing.id; console.log("ℹ️ Onboarding category already exists"); return; }
   const category = await guild.channels.create({
-    name: "ONBOARDING",
-    type: ChannelType.GuildCategory,
+    name: "ONBOARDING", type: ChannelType.GuildCategory,
     permissionOverwrites: [{ id: guild.roles.everyone.id, deny: [PermissionFlagsBits.ViewChannel] }]
   });
-
   onboardingCategoryId = category.id;
   console.log("✅ Onboarding category created");
 }
@@ -125,16 +120,9 @@ async function setupStaffCategory() {
   const guild = await client.guilds.fetch(GUILD_ID);
   const channels = await guild.channels.fetch();
   const existing = channels.find(c => c.type === ChannelType.GuildCategory && c.name === "STAFF ONLY");
-
-  if (existing) {
-    staffCategoryId = existing.id;
-    console.log("ℹ️ Staff Only category already exists");
-    return;
-  }
-
+  if (existing) { staffCategoryId = existing.id; console.log("ℹ️ Staff Only category already exists"); return; }
   const category = await guild.channels.create({
-    name: "STAFF ONLY",
-    type: ChannelType.GuildCategory,
+    name: "STAFF ONLY", type: ChannelType.GuildCategory,
     permissionOverwrites: [
       { id: guild.roles.everyone.id, deny: [PermissionFlagsBits.ViewChannel] },
       { id: ROLE_IDS.mods, allow: [PermissionFlagsBits.ViewChannel, PermissionFlagsBits.SendMessages, PermissionFlagsBits.ReadMessageHistory, PermissionFlagsBits.EmbedLinks] },
@@ -142,7 +130,6 @@ async function setupStaffCategory() {
       { id: ROLE_IDS.owner, allow: [PermissionFlagsBits.ViewChannel, PermissionFlagsBits.SendMessages, PermissionFlagsBits.ReadMessageHistory, PermissionFlagsBits.EmbedLinks] }
     ]
   });
-
   staffCategoryId = category.id;
   console.log("✅ Staff Only category created");
 }
@@ -154,21 +141,11 @@ async function setupTicketsCategory() {
   const guild = await client.guilds.fetch(GUILD_ID);
   const channels = await guild.channels.fetch();
   const existing = channels.find(c => c.type === ChannelType.GuildCategory && c.name === "TICKETS");
-
-  if (existing) {
-    ticketsCategoryId = existing.id;
-    console.log("ℹ️ Tickets category already exists");
-    return;
-  }
-
+  if (existing) { ticketsCategoryId = existing.id; console.log("ℹ️ Tickets category already exists"); return; }
   const category = await guild.channels.create({
-    name: "TICKETS",
-    type: ChannelType.GuildCategory,
-    permissionOverwrites: [
-      { id: guild.roles.everyone.id, deny: [PermissionFlagsBits.ViewChannel] }
-    ]
+    name: "TICKETS", type: ChannelType.GuildCategory,
+    permissionOverwrites: [{ id: guild.roles.everyone.id, deny: [PermissionFlagsBits.ViewChannel] }]
   });
-
   ticketsCategoryId = category.id;
   console.log("✅ Tickets category created");
 }
@@ -179,11 +156,7 @@ async function setupTicketsCategory() {
 async function setupSupportChannel() {
   const guild = await client.guilds.fetch(GUILD_ID);
   const channels = await guild.channels.fetch();
-
-  const existing = channels.find(
-    c => c.parentId === INFO_CATEGORY_ID && c.name === "🎟️support"
-  );
-
+  const existing = channels.find(c => c.parentId === INFO_CATEGORY_ID && c.name === "🎟️support");
   if (existing) {
     supportChannelId = existing.id;
     console.log("ℹ️ Support channel already exists");
@@ -193,22 +166,14 @@ async function setupSupportChannel() {
     await postSupportMessage(existing);
     return;
   }
-
   const channel = await guild.channels.create({
-    name: "🎟️support",
-    type: ChannelType.GuildText,
-    parent: INFO_CATEGORY_ID,
+    name: "🎟️support", type: ChannelType.GuildText, parent: INFO_CATEGORY_ID,
     permissionOverwrites: [
       { id: guild.roles.everyone.id, deny: [PermissionFlagsBits.ViewChannel] },
       { id: ROLE_IDS.unverified, deny: [PermissionFlagsBits.ViewChannel] },
-      {
-        id: ROLE_IDS.goofyGoobers,
-        allow: [PermissionFlagsBits.ViewChannel, PermissionFlagsBits.ReadMessageHistory],
-        deny: [PermissionFlagsBits.SendMessages]
-      }
+      { id: ROLE_IDS.goofyGoobers, allow: [PermissionFlagsBits.ViewChannel, PermissionFlagsBits.ReadMessageHistory], deny: [PermissionFlagsBits.SendMessages] }
     ]
   });
-
   supportChannelId = channel.id;
   console.log("✅ Support channel created");
   await postSupportMessage(channel);
@@ -241,7 +206,6 @@ async function postSupportMessage(channel) {
     new ButtonBuilder().setCustomId("ticket_feedback").setLabel("General Feedback").setEmoji("💬").setStyle(ButtonStyle.Primary),
     new ButtonBuilder().setCustomId("ticket_suggestion").setLabel("Server Suggestion").setEmoji("💡").setStyle(ButtonStyle.Primary)
   );
-
   const row2 = new ActionRowBuilder().addComponents(
     new ButtonBuilder().setCustomId("ticket_question").setLabel("Question for Mods").setEmoji("❓").setStyle(ButtonStyle.Secondary),
     new ButtonBuilder().setCustomId("ticket_appeal").setLabel("Appeal a Ban").setEmoji("⚖️").setStyle(ButtonStyle.Secondary)
@@ -257,21 +221,10 @@ async function postSupportMessage(channel) {
 async function setupModTicketsChannel() {
   const guild = await client.guilds.fetch(GUILD_ID);
   const channels = await guild.channels.fetch();
-
-  const existing = channels.find(
-    c => c.parentId === staffCategoryId && c.name === "🔒mod-tickets"
-  );
-
-  if (existing) {
-    modTicketsChannelId = existing.id;
-    console.log("ℹ️ Mod tickets channel already exists");
-    return;
-  }
-
+  const existing = channels.find(c => c.parentId === staffCategoryId && c.name === "🔒mod-tickets");
+  if (existing) { modTicketsChannelId = existing.id; console.log("ℹ️ Mod tickets channel already exists"); return; }
   const channel = await guild.channels.create({
-    name: "🔒mod-tickets",
-    type: ChannelType.GuildText,
-    parent: staffCategoryId,
+    name: "🔒mod-tickets", type: ChannelType.GuildText, parent: staffCategoryId,
     permissionOverwrites: [
       { id: guild.roles.everyone.id, deny: [PermissionFlagsBits.ViewChannel] },
       { id: ROLE_IDS.mods, allow: [PermissionFlagsBits.ViewChannel, PermissionFlagsBits.SendMessages, PermissionFlagsBits.ReadMessageHistory, PermissionFlagsBits.EmbedLinks] },
@@ -279,7 +232,6 @@ async function setupModTicketsChannel() {
       { id: ROLE_IDS.owner, allow: [PermissionFlagsBits.ViewChannel, PermissionFlagsBits.SendMessages, PermissionFlagsBits.ReadMessageHistory, PermissionFlagsBits.EmbedLinks] }
     ]
   });
-
   modTicketsChannelId = channel.id;
   console.log("✅ Mod tickets channel created");
 }
@@ -290,11 +242,7 @@ async function setupModTicketsChannel() {
 async function setupPickRolesChannel() {
   const guild = await client.guilds.fetch(GUILD_ID);
   const channels = await guild.channels.fetch();
-
-  const existing = channels.find(
-    c => c.parentId === INFO_CATEGORY_ID && c.name === "🎭pick-your-roles"
-  );
-
+  const existing = channels.find(c => c.parentId === INFO_CATEGORY_ID && c.name === "🎭pick-your-roles");
   if (existing) {
     pickRolesChannelId = existing.id;
     console.log("ℹ️ Pick your roles channel already exists");
@@ -304,22 +252,14 @@ async function setupPickRolesChannel() {
     await postPickRolesMessage(existing);
     return;
   }
-
   const channel = await guild.channels.create({
-    name: "🎭pick-your-roles",
-    type: ChannelType.GuildText,
-    parent: INFO_CATEGORY_ID,
+    name: "🎭pick-your-roles", type: ChannelType.GuildText, parent: INFO_CATEGORY_ID,
     permissionOverwrites: [
       { id: guild.roles.everyone.id, deny: [PermissionFlagsBits.ViewChannel] },
       { id: ROLE_IDS.unverified, deny: [PermissionFlagsBits.ViewChannel] },
-      {
-        id: ROLE_IDS.goofyGoobers,
-        allow: [PermissionFlagsBits.ViewChannel, PermissionFlagsBits.ReadMessageHistory],
-        deny: [PermissionFlagsBits.SendMessages]
-      }
+      { id: ROLE_IDS.goofyGoobers, allow: [PermissionFlagsBits.ViewChannel, PermissionFlagsBits.ReadMessageHistory], deny: [PermissionFlagsBits.SendMessages] }
     ]
   });
-
   pickRolesChannelId = channel.id;
   console.log("✅ Pick your roles channel created");
   await postPickRolesMessage(channel);
@@ -353,7 +293,6 @@ async function postPickRolesMessage(channel) {
     new ButtonBuilder().setCustomId("roles_gamers").setLabel("Gamers").setEmoji("🎮").setStyle(ButtonStyle.Primary),
     new ButtonBuilder().setCustomId("roles_creative").setLabel("Creative").setEmoji("🎨").setStyle(ButtonStyle.Primary)
   );
-
   const contentRow = new ActionRowBuilder().addComponents(
     new ButtonBuilder().setCustomId("roles_streamer").setLabel("Streamer").setEmoji("🎙️").setStyle(ButtonStyle.Success),
     new ButtonBuilder().setCustomId("roles_viewer").setLabel("Viewer").setEmoji("👀").setStyle(ButtonStyle.Secondary)
@@ -369,11 +308,7 @@ async function postPickRolesMessage(channel) {
 async function setupNotificationChannel() {
   const guild = await client.guilds.fetch(GUILD_ID);
   const channels = await guild.channels.fetch();
-
-  const existing = channels.find(
-    c => c.parentId === INFO_CATEGORY_ID && c.name === "🔔notification-settings"
-  );
-
+  const existing = channels.find(c => c.parentId === INFO_CATEGORY_ID && c.name === "🔔notification-settings");
   if (existing) {
     notificationChannelId = existing.id;
     console.log("ℹ️ Notification settings channel already exists");
@@ -383,22 +318,14 @@ async function setupNotificationChannel() {
     await postNotificationMessage(existing);
     return;
   }
-
   const channel = await guild.channels.create({
-    name: "🔔notification-settings",
-    type: ChannelType.GuildText,
-    parent: INFO_CATEGORY_ID,
+    name: "🔔notification-settings", type: ChannelType.GuildText, parent: INFO_CATEGORY_ID,
     permissionOverwrites: [
       { id: guild.roles.everyone.id, deny: [PermissionFlagsBits.ViewChannel] },
       { id: ROLE_IDS.unverified, deny: [PermissionFlagsBits.ViewChannel] },
-      {
-        id: ROLE_IDS.goofyGoobers,
-        allow: [PermissionFlagsBits.ViewChannel, PermissionFlagsBits.ReadMessageHistory],
-        deny: [PermissionFlagsBits.SendMessages]
-      }
+      { id: ROLE_IDS.goofyGoobers, allow: [PermissionFlagsBits.ViewChannel, PermissionFlagsBits.ReadMessageHistory], deny: [PermissionFlagsBits.SendMessages] }
     ]
   });
-
   notificationChannelId = channel.id;
   console.log("✅ Notification settings channel created");
   await postNotificationMessage(channel);
@@ -436,37 +363,24 @@ async function postNotificationMessage(channel) {
 async function setupBotInfoChannel() {
   const guild = await client.guilds.fetch(GUILD_ID);
   const channels = await guild.channels.fetch();
-
-  const existing = channels.find(
-    c => c.parentId === INFO_CATEGORY_ID && c.name === "🤖bot-info"
-  );
-
+  const existing = channels.find(c => c.parentId === INFO_CATEGORY_ID && c.name === "🤖bot-info");
   if (existing) {
     botInfoChannelId = existing.id;
     console.log("ℹ️ Bot info channel already exists");
-    // Always delete old message and repost so it stays up to date
     const messages = await existing.messages.fetch({ limit: 10 });
     const botMsgs = messages.filter(m => m.author.id === client.user.id);
     for (const msg of botMsgs.values()) await msg.delete().catch(() => {});
     await postBotInfoMessage(existing);
     return;
   }
-
   const channel = await guild.channels.create({
-    name: "🤖bot-info",
-    type: ChannelType.GuildText,
-    parent: INFO_CATEGORY_ID,
+    name: "🤖bot-info", type: ChannelType.GuildText, parent: INFO_CATEGORY_ID,
     permissionOverwrites: [
       { id: guild.roles.everyone.id, deny: [PermissionFlagsBits.ViewChannel] },
       { id: ROLE_IDS.unverified, deny: [PermissionFlagsBits.ViewChannel] },
-      {
-        id: ROLE_IDS.goofyGoobers,
-        allow: [PermissionFlagsBits.ViewChannel, PermissionFlagsBits.ReadMessageHistory],
-        deny: [PermissionFlagsBits.SendMessages]
-      }
+      { id: ROLE_IDS.goofyGoobers, allow: [PermissionFlagsBits.ViewChannel, PermissionFlagsBits.ReadMessageHistory], deny: [PermissionFlagsBits.SendMessages] }
     ]
   });
-
   botInfoChannelId = channel.id;
   console.log("✅ Bot info channel created");
   await postBotInfoMessage(channel);
@@ -481,9 +395,7 @@ async function postBotInfoMessage(channel) {
     .setDescription(
       "Hey there! I'm **DinoBot** 🦕 — the custom bot built specifically for **DinoGang**.\n" +
       "Here's everything I do and how to use me.\n\n" +
-
       "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n" +
-
       "**⚙️ What DinoBot Does**\n\n" +
       "🔴 **Twitch Live Alerts** — automatically posts an alert whenever a DinoGang member goes live on Twitch\n\n" +
       "👋 **Member Onboarding** — when you join, DinoBot creates a private channel just for you to get set up with rules and roles\n\n" +
@@ -491,9 +403,7 @@ async function postBotInfoMessage(channel) {
       "🔔 **Notification Controls** — opt in or out of stream alerts and announcements pings whenever you want\n\n" +
       "🔒 **Channel Lockdown** — new members can only see #welcome and #rules until onboarding is complete\n\n" +
       "🎟️ **Ticket System** — submit private tickets to the mod team for reports, feedback, suggestions, and more\n\n" +
-
       "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n" +
-
       "**🗺️ Server Features**\n\n" +
       "📋 `#rules` — server rules, read-only\n" +
       "🎭 `#🎭pick-your-roles` — toggle your Gamers, Creative, Streamer, and Viewer roles\n" +
@@ -501,9 +411,7 @@ async function postBotInfoMessage(channel) {
       "🎟️ `#🎟️support` — open a private ticket with the mod team\n" +
       "🎮 **Gamers** — private space for gamers *(requires Gamers role)*\n" +
       "🎨 **Creative** — private space for creative types *(requires Creative role)*\n\n" +
-
       "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n" +
-
       "**👋 How Onboarding Works**\n\n" +
       "When you first join DinoBot creates a private channel just for you:\n\n" +
       "**Step 1** ✅ — Read and accept the server rules\n" +
@@ -511,9 +419,7 @@ async function postBotInfoMessage(channel) {
       "**Step 3** 🎙️ — Pick your content role *(Streamer or Viewer)*\n" +
       "**Step 4** 🔔 — Set your notification preferences *(or skip)*\n\n" +
       "Once complete your private channel self-destructs and you have full server access! 🎉\n\n" +
-
       "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n" +
-
       "**🎟️ How the Ticket System Works**\n\n" +
       "Head to `#🎟️support` and click a button to open a ticket:\n\n" +
       "🚨 **Report a User** — report rule-breaking *(fully anonymous)*\n" +
@@ -521,14 +427,12 @@ async function postBotInfoMessage(channel) {
       "💡 **Server Suggestion** — suggest a new feature or change\n" +
       "❓ **Question for Mods** — ask the mod team something privately\n" +
       "⚖️ **Appeal a Ban** — appeal a ban or punishment\n\n" +
+      "A pop-up form will appear for you to describe your issue before submitting.\n" +
       "⚠️ You can only have **one open ticket at a time**. Once resolved you can open another.\n" +
       "All tickets are **private** — only you and the mod team can see them.\n\n" +
-
       "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n" +
-
       "**🛠️ Commands**\n\n" +
       "*Slash commands coming soon!*\n\n" +
-
       "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n" +
       "*DinoBot is a custom bot built for DinoGang* 🦕"
     )
@@ -628,7 +532,6 @@ client.on("guildMemberAdd", async (member) => {
   try {
     console.log(`👋 New member joined: ${member.user.tag}`);
     await member.roles.add(ROLE_IDS.unverified);
-
     const guild = await client.guilds.fetch(GUILD_ID);
     const welcomeChannel = await client.channels.fetch(WELCOME_CHANNEL_ID);
 
@@ -660,16 +563,10 @@ async function createOnboardingChannel(guild, member) {
     const channelName = `welcome-${member.user.username.toLowerCase().replace(/[^a-z0-9]/g, "")}`;
     const channels = await guild.channels.fetch();
     const existing = channels.find(c => c.parentId === onboardingCategoryId && c.name === channelName);
-
-    if (existing) {
-      console.log(`ℹ️ Onboarding channel already exists for ${member.user.tag}`);
-      return;
-    }
+    if (existing) { console.log(`ℹ️ Onboarding channel already exists for ${member.user.tag}`); return; }
 
     const channel = await guild.channels.create({
-      name: channelName,
-      type: ChannelType.GuildText,
-      parent: onboardingCategoryId,
+      name: channelName, type: ChannelType.GuildText, parent: onboardingCategoryId,
       permissionOverwrites: [
         { id: guild.roles.everyone.id, deny: [PermissionFlagsBits.ViewChannel] },
         { id: member.id, allow: [PermissionFlagsBits.ViewChannel, PermissionFlagsBits.SendMessages, PermissionFlagsBits.ReadMessageHistory] },
@@ -713,9 +610,7 @@ async function createOnboardingChannel(guild, member) {
     const rulesRow = new ActionRowBuilder().addComponents(
       new ButtonBuilder()
         .setCustomId(`onboard_accept_rules_${member.id}`)
-        .setLabel("Accept Rules")
-        .setEmoji("✅")
-        .setStyle(ButtonStyle.Success)
+        .setLabel("Accept Rules").setEmoji("✅").setStyle(ButtonStyle.Success)
     );
 
     await channel.send({ content: `${member}`, embeds: [rulesEmbed], components: [rulesRow] });
@@ -727,7 +622,7 @@ async function createOnboardingChannel(guild, member) {
 // ----------------------------
 // CREATE TICKET CHANNEL
 // ----------------------------
-async function createTicketChannel(guild, member, ticketType, anonymous) {
+async function createTicketChannel(guild, member, ticketType, anonymous, description = null, location = null) {
   const safeName = member.user.username.toLowerCase().replace(/[^a-z0-9]/g, "");
   const channelName = `ticket-${safeName}`;
 
@@ -750,9 +645,7 @@ async function createTicketChannel(guild, member, ticketType, anonymous) {
   }
 
   const channel = await guild.channels.create({
-    name: channelName,
-    type: ChannelType.GuildText,
-    parent: ticketsCategoryId,
+    name: channelName, type: ChannelType.GuildText, parent: ticketsCategoryId,
     permissionOverwrites: permOverwrites
   });
 
@@ -766,36 +659,31 @@ async function createTicketChannel(guild, member, ticketType, anonymous) {
     appeal: "⚖️ Appeal a Ban"
   };
 
+  let descriptionText = anonymous
+    ? "🔒 **This ticket is anonymous.** The mod team cannot see who submitted it.\n\n"
+    : `👤 **Submitted by:** ${member}\n\n`;
+
+  if (description) descriptionText += `**Description:**\n${description}\n\n`;
+  if (location) descriptionText += `**Where did this happen?**\n${location}\n\n`;
+  descriptionText += "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n*Use the buttons below to close this ticket when resolved.*";
+
   const embed = new EmbedBuilder()
     .setTitle(`🎟️ ${typeLabels[ticketType]}`)
-    .setDescription(
-      (anonymous
-        ? "🔒 **This ticket is anonymous.** The mod team cannot see who submitted it.\n\n"
-        : `👤 **Submitted by:** ${member}\n\n`) +
-      "Please describe your issue in as much detail as possible. The mod team will respond shortly.\n\n" +
-      "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n" +
-      "*Use the buttons below to close this ticket when resolved.*"
-    )
+    .setDescription(descriptionText)
     .setColor(0x9146FF)
     .setTimestamp()
     .setFooter({ text: `DinoBot • Ticket System • ${typeLabels[ticketType]}` });
 
   const row = new ActionRowBuilder().addComponents(
     new ButtonBuilder()
-      .setCustomId(`ticket_resolve_${member.id}`)
-      .setLabel("Resolve")
-      .setEmoji("✅")
-      .setStyle(ButtonStyle.Success),
+      .setCustomId(`ticket_resolve_${member.id}`).setLabel("Resolve").setEmoji("✅").setStyle(ButtonStyle.Success),
     new ButtonBuilder()
-      .setCustomId(`ticket_close_${member.id}`)
-      .setLabel("Close Without Resolving")
-      .setEmoji("🗑️")
-      .setStyle(ButtonStyle.Danger)
+      .setCustomId(`ticket_close_${member.id}`).setLabel("Close Without Resolving").setEmoji("🗑️").setStyle(ButtonStyle.Danger)
   );
 
   const staffPing = `<@&${ROLE_IDS.mods}>`;
   await channel.send({
-    content: anonymous ? `${staffPing} 🎟️ New anonymous ticket!` : `${staffPing} 🎟️ New ticket from ${member}!`,
+    content: anonymous ? `${staffPing} 🎟️ New anonymous report!` : `${staffPing} 🎟️ New ticket from ${member}!`,
     embeds: [embed],
     components: [row]
   });
@@ -816,7 +704,7 @@ client.on("interactionCreate", async (interaction) => {
   try {
 
     // ----------------------------
-    // TICKET BUTTONS
+    // TICKET BUTTONS — show modal
     // ----------------------------
     const ticketTypes = ["report", "feedback", "suggestion", "question", "appeal"];
     const ticketMatch = ticketTypes.find(t => customId === `ticket_${t}`);
@@ -831,28 +719,74 @@ client.on("interactionCreate", async (interaction) => {
         return;
       }
 
-      const anonymous = ticketMatch === "report";
-      const ticketChannel = await createTicketChannel(guild, member, ticketMatch, anonymous);
+      const modalTitles = {
+        report: "🚨 Report a User",
+        feedback: "💬 General Feedback",
+        suggestion: "💡 Server Suggestion",
+        question: "❓ Question for Mods",
+        appeal: "⚖️ Appeal a Ban"
+      };
 
-      if (!ticketChannel) {
-        await interaction.reply({
-          content: "❌ You already have an open ticket! Please resolve it before opening a new one.",
-          flags: 64
-        });
-        return;
-      }
+      const modal = new ModalBuilder()
+        .setCustomId(`ticket_modal_${ticketMatch}_${user.id}`)
+        .setTitle(modalTitles[ticketMatch]);
 
-      if (anonymous) {
-        await interaction.reply({
-          content: "🔒 Your anonymous ticket has been submitted. The mod team will handle it shortly.",
-          flags: 64
-        });
+      if (ticketMatch === "report") {
+        // Report modal — 3 fields
+        const reportedUserInput = new TextInputBuilder()
+          .setCustomId("reported_user")
+          .setLabel("Who are you reporting?")
+          .setStyle(TextInputStyle.Short)
+          .setPlaceholder("Username of the person you're reporting")
+          .setMinLength(1)
+          .setMaxLength(100)
+          .setRequired(true);
+
+        const locationInput = new TextInputBuilder()
+          .setCustomId("ticket_location")
+          .setLabel("Where did this happen?")
+          .setStyle(TextInputStyle.Short)
+          .setPlaceholder("e.g. #general, voice chat, DMs")
+          .setMinLength(1)
+          .setMaxLength(100)
+          .setRequired(true);
+
+        const descriptionInput = new TextInputBuilder()
+          .setCustomId("ticket_description")
+          .setLabel("What happened?")
+          .setStyle(TextInputStyle.Paragraph)
+          .setPlaceholder("Describe what happened in as much detail as possible. Your identity will remain anonymous.")
+          .setMinLength(10)
+          .setMaxLength(1000)
+          .setRequired(true);
+
+        modal.addComponents(
+          new ActionRowBuilder().addComponents(reportedUserInput),
+          new ActionRowBuilder().addComponents(locationInput),
+          new ActionRowBuilder().addComponents(descriptionInput)
+        );
       } else {
-        await interaction.reply({
-          content: `✅ Your ticket has been created! <#${ticketChannel.id}>`,
-          flags: 64
-        });
+        // All other tickets — single description field
+        const placeholders = {
+          feedback: "Share your feedback about the server...",
+          suggestion: "What would you like to suggest?",
+          question: "What would you like to ask the mod team?",
+          appeal: "Describe your situation and why you'd like to appeal..."
+        };
+
+        const descriptionInput = new TextInputBuilder()
+          .setCustomId("ticket_description")
+          .setLabel("Description")
+          .setStyle(TextInputStyle.Paragraph)
+          .setPlaceholder(placeholders[ticketMatch])
+          .setMinLength(10)
+          .setMaxLength(1000)
+          .setRequired(true);
+
+        modal.addComponents(new ActionRowBuilder().addComponents(descriptionInput));
       }
+
+      await interaction.showModal(modal);
       return;
     }
 
@@ -959,7 +893,6 @@ client.on("interactionCreate", async (interaction) => {
       await member.roles.remove(ROLE_IDS.unverified);
       await member.roles.add(ROLE_IDS.goofyGoobers);
       console.log(`✅ Rules accepted: ${user.tag}`);
-
       await interaction.update({
         embeds: [new EmbedBuilder()
           .setTitle("✅ Rules Accepted!")
@@ -968,7 +901,6 @@ client.on("interactionCreate", async (interaction) => {
           .setFooter({ text: "Step 1 of 4 — Complete ✅" })],
         components: []
       });
-
       await sendInterestRoleSelection(interaction.channel, member);
       return;
     }
@@ -976,11 +908,7 @@ client.on("interactionCreate", async (interaction) => {
     if (customId.startsWith("onboard_gamers_")) {
       await member.roles.add(ROLE_IDS.gamers);
       await interaction.update({
-        embeds: [new EmbedBuilder()
-          .setTitle("🎮 Gamers role assigned!")
-          .setDescription("Nice! Keep going...")
-          .setColor(0x9146FF)
-          .setFooter({ text: "Step 2 of 4 — Complete ✅" })],
+        embeds: [new EmbedBuilder().setTitle("🎮 Gamers role assigned!").setDescription("Nice! Keep going...").setColor(0x9146FF).setFooter({ text: "Step 2 of 4 — Complete ✅" })],
         components: []
       });
       await sendContentRoleSelection(interaction.channel, member);
@@ -990,11 +918,7 @@ client.on("interactionCreate", async (interaction) => {
     if (customId.startsWith("onboard_creative_")) {
       await member.roles.add(ROLE_IDS.creative);
       await interaction.update({
-        embeds: [new EmbedBuilder()
-          .setTitle("🎨 Creative role assigned!")
-          .setDescription("Nice! Keep going...")
-          .setColor(0x9146FF)
-          .setFooter({ text: "Step 2 of 4 — Complete ✅" })],
+        embeds: [new EmbedBuilder().setTitle("🎨 Creative role assigned!").setDescription("Nice! Keep going...").setColor(0x9146FF).setFooter({ text: "Step 2 of 4 — Complete ✅" })],
         components: []
       });
       await sendContentRoleSelection(interaction.channel, member);
@@ -1003,11 +927,7 @@ client.on("interactionCreate", async (interaction) => {
 
     if (customId.startsWith("onboard_skip_interest_")) {
       await interaction.update({
-        embeds: [new EmbedBuilder()
-          .setTitle("⏭️ Skipped!")
-          .setDescription("No worries! Keep going...")
-          .setColor(0x9146FF)
-          .setFooter({ text: "Step 2 of 4 — Complete ✅" })],
+        embeds: [new EmbedBuilder().setTitle("⏭️ Skipped!").setDescription("No worries! Keep going...").setColor(0x9146FF).setFooter({ text: "Step 2 of 4 — Complete ✅" })],
         components: []
       });
       await sendContentRoleSelection(interaction.channel, member);
@@ -1017,11 +937,7 @@ client.on("interactionCreate", async (interaction) => {
     if (customId.startsWith("onboard_streamer_")) {
       await member.roles.add(ROLE_IDS.streamer);
       await interaction.update({
-        embeds: [new EmbedBuilder()
-          .setTitle("🎙️ Streamer role assigned!")
-          .setDescription("Almost done!")
-          .setColor(0x57F287)
-          .setFooter({ text: "Step 3 of 4 — Complete ✅" })],
+        embeds: [new EmbedBuilder().setTitle("🎙️ Streamer role assigned!").setDescription("Almost done!").setColor(0x57F287).setFooter({ text: "Step 3 of 4 — Complete ✅" })],
         components: []
       });
       await sendNotificationSelection(interaction.channel, member);
@@ -1031,11 +947,7 @@ client.on("interactionCreate", async (interaction) => {
     if (customId.startsWith("onboard_viewer_")) {
       await member.roles.add(ROLE_IDS.viewer);
       await interaction.update({
-        embeds: [new EmbedBuilder()
-          .setTitle("👀 Viewer role assigned!")
-          .setDescription("Almost done!")
-          .setColor(0x57F287)
-          .setFooter({ text: "Step 3 of 4 — Complete ✅" })],
+        embeds: [new EmbedBuilder().setTitle("👀 Viewer role assigned!").setDescription("Almost done!").setColor(0x57F287).setFooter({ text: "Step 3 of 4 — Complete ✅" })],
         components: []
       });
       await sendNotificationSelection(interaction.channel, member);
@@ -1044,7 +956,6 @@ client.on("interactionCreate", async (interaction) => {
 
     if (customId.startsWith("onboard_notif_")) {
       const stripped = customId.replace("onboard_notif_", "").replace(`_${memberId}`, "");
-
       if (stripped.includes("stream")) await member.roles.add(ROLE_IDS.streamAlerts);
       if (stripped.includes("announcements")) await member.roles.add(ROLE_IDS.announcements);
 
@@ -1055,22 +966,79 @@ client.on("interactionCreate", async (interaction) => {
       await interaction.update({
         embeds: [new EmbedBuilder()
           .setTitle("🔔 Notifications set!")
-          .setDescription(
-            selected.length
-              ? `You selected: **${selected.join(", ")}**\n\nYou can change this anytime in #🔔notification-settings.`
-              : "No notifications selected. You can opt in anytime in #🔔notification-settings."
-          )
+          .setDescription(selected.length
+            ? `You selected: **${selected.join(", ")}**\n\nYou can change this anytime in #🔔notification-settings.`
+            : "No notifications selected. You can opt in anytime in #🔔notification-settings.")
           .setColor(0x57F287)
           .setFooter({ text: "Step 4 of 4 — Complete ✅" })],
         components: []
       });
-
       await finishOnboarding(interaction.channel, member);
       return;
     }
 
   } catch (err) {
     console.error("❌ Button interaction error:", err);
+    await interaction.reply({ content: "❌ Something went wrong. Please contact a mod.", flags: 64 }).catch(() => {});
+  }
+});
+
+// ----------------------------
+// MODAL SUBMIT HANDLER
+// ----------------------------
+client.on("interactionCreate", async (interaction) => {
+  if (!interaction.isModalSubmit()) return;
+  if (!interaction.customId.startsWith("ticket_modal_")) return;
+
+  const { customId, user, guild } = interaction;
+  const member = await guild.members.fetch(user.id);
+
+  // Parse customId: ticket_modal_report_USERID or ticket_modal_feedback_USERID
+  const withoutPrefix = customId.replace("ticket_modal_", "");
+  const ticketType = withoutPrefix.split("_")[0];
+  const anonymous = ticketType === "report";
+
+  const description = interaction.fields.getTextInputValue("ticket_description");
+  const location = ticketType === "report"
+    ? interaction.fields.getTextInputValue("ticket_location")
+    : null;
+  const reportedUser = ticketType === "report"
+    ? interaction.fields.getTextInputValue("reported_user")
+    : null;
+
+  try {
+    if (openTickets.has(user.id)) {
+      const existingChannelId = openTickets.get(user.id);
+      await interaction.reply({
+        content: `❌ You already have an open ticket! <#${existingChannelId}>`,
+        flags: 64
+      });
+      return;
+    }
+
+    const ticketChannel = await createTicketChannel(guild, member, ticketType, anonymous, description, location, reportedUser);
+
+    if (!ticketChannel) {
+      await interaction.reply({
+        content: "❌ You already have an open ticket! Please resolve it before opening a new one.",
+        flags: 64
+      });
+      return;
+    }
+
+    if (anonymous) {
+      await interaction.reply({
+        content: "🔒 Your anonymous report has been submitted. The mod team will handle it shortly.",
+        flags: 64
+      });
+    } else {
+      await interaction.reply({
+        content: `✅ Your ticket has been created! <#${ticketChannel.id}>`,
+        flags: 64
+      });
+    }
+  } catch (err) {
+    console.error("❌ Modal submit error:", err);
     await interaction.reply({ content: "❌ Something went wrong. Please contact a mod.", flags: 64 }).catch(() => {});
   }
 });
@@ -1258,14 +1226,9 @@ async function createEventSubSubscription(token, userId) {
       "Content-Type": "application/json"
     },
     body: JSON.stringify({
-      type: "stream.online",
-      version: "1",
+      type: "stream.online", version: "1",
       condition: { broadcaster_user_id: userId },
-      transport: {
-        method: "webhook",
-        callback: process.env.TWITCH_CALLBACK_URL,
-        secret: process.env.TWITCH_WEBHOOK_SECRET
-      }
+      transport: { method: "webhook", callback: process.env.TWITCH_CALLBACK_URL, secret: process.env.TWITCH_WEBHOOK_SECRET }
     })
   });
   const data = await res.json();
@@ -1284,14 +1247,10 @@ async function getStreamInfo(token, userId) {
 async function subscribeToTwitchUsers() {
   const logins = process.env.TWITCH_USER_LOGINS
     .split(",").map(l => l.trim().toLowerCase()).filter(Boolean);
-
   console.log("Monitoring:", logins.join(", "));
-
   const token = await getTwitchToken();
   const users = await getTwitchUserIds(token, logins);
-
   if (!users.length) { console.warn("⚠️ No Twitch users found"); return; }
-
   for (const user of users) {
     const result = await createEventSubSubscription(token, user.id);
     if (!result.ok && result.status !== 409) {
@@ -1318,13 +1277,10 @@ app.post("/twitch/eventsub", async (req, res) => {
 
     const hmacMessage = messageId + timestamp + req.rawBody;
     const expectedSignature = "sha256=" + crypto.createHmac("sha256", secret).update(hmacMessage).digest("hex");
-
-    const valid =
-      expectedSignature.length === signature.length &&
+    const valid = expectedSignature.length === signature.length &&
       crypto.timingSafeEqual(Buffer.from(expectedSignature), Buffer.from(signature));
 
     if (!valid) return res.status(403).send("Forbidden");
-
     if (processedMessageIds.has(messageId)) return res.status(200).send("Duplicate ignored");
     processedMessageIds.add(messageId);
     if (processedMessageIds.size > 1000) processedMessageIds.delete(processedMessageIds.values().next().value);
@@ -1336,15 +1292,11 @@ app.post("/twitch/eventsub", async (req, res) => {
     if (messageType === "notification" && req.body.subscription?.type === "stream.online") {
       const { broadcaster_user_id, broadcaster_user_login, broadcaster_user_name } = req.body.event;
       console.log(`📡 ${broadcaster_user_name} went live`);
-
       const token = await getTwitchToken();
       const stream = await getStreamInfo(token, broadcaster_user_id);
       const channel = await client.channels.fetch(process.env.DISCORD_CHANNEL_ID);
-
       if (!channel || !stream) return res.status(200).send("Missing data");
-
       const thumbnailUrl = stream.thumbnail_url.replace("{width}", "1280").replace("{height}", "720");
-
       const embed = new EmbedBuilder()
         .setTitle(`🦕 ${broadcaster_user_name} is now LIVE on Twitch!`)
         .setURL(`https://twitch.tv/${broadcaster_user_login}`)
@@ -1353,7 +1305,6 @@ app.post("/twitch/eventsub", async (req, res) => {
         .setColor(0x9146FF)
         .setFooter({ text: "Twitch Live Alert • DinoBot" })
         .setTimestamp();
-
       await channel.send({ content: "<@&1480729998339080232> 🔴 A friend just went live!", embeds: [embed] });
       console.log(`✅ Alert sent for ${broadcaster_user_name}`);
       return res.status(200).send("Notification processed");
@@ -1365,7 +1316,6 @@ app.post("/twitch/eventsub", async (req, res) => {
     }
 
     return res.status(200).send("OK");
-
   } catch (err) {
     console.error("❌ Webhook error:", err);
     return res.status(500).send("Internal Server Error");
