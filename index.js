@@ -136,14 +136,13 @@ async function setupPickRolesChannel() {
   const channels = await guild.channels.fetch();
 
   const existing = channels.find(
-    c => c.parentId === INFO_CATEGORY_ID && c.name === "pick-your-roles"
+    c => c.parentId === INFO_CATEGORY_ID && c.name === "🎭pick-your-roles"
   );
 
   if (existing) {
     pickRolesChannelId = existing.id;
     console.log("ℹ️ Pick your roles channel already exists");
 
-    // Check if bot message already exists
     const messages = await existing.messages.fetch({ limit: 5 });
     const botMsg = messages.find(m => m.author.id === client.user.id && m.embeds.length > 0);
     if (botMsg) return;
@@ -153,7 +152,7 @@ async function setupPickRolesChannel() {
   }
 
   const channel = await guild.channels.create({
-    name: "pick-your-roles",
+    name: "🎭pick-your-roles",
     type: ChannelType.GuildText,
     parent: INFO_CATEGORY_ID,
     permissionOverwrites: [
@@ -460,11 +459,7 @@ client.on("interactionCreate", async (interaction) => {
   const member = await guild.members.fetch(user.id);
 
   try {
-
-    // ----------------------------
-    // PICK YOUR ROLES BUTTONS
-    // (toggle on/off for existing members)
-    // ----------------------------
+    // Pick your roles buttons (toggle)
     if (customId === "roles_bros") {
       if (member.roles.cache.has(ROLE_IDS.bros)) {
         await member.roles.remove(ROLE_IDS.bros);
@@ -509,9 +504,7 @@ client.on("interactionCreate", async (interaction) => {
       return;
     }
 
-    // ----------------------------
-    // ONBOARDING BUTTONS
-    // ----------------------------
+    // Onboarding buttons
     const parts = customId.split("_");
     const memberId = parts[parts.length - 1];
 
