@@ -444,9 +444,11 @@ async function setupBotInfoChannel() {
   if (existing) {
     botInfoChannelId = existing.id;
     console.log("ℹ️ Bot info channel already exists");
-    const messages = await existing.messages.fetch({ limit: 5 });
-    const botMsg = messages.find(m => m.author.id === client.user.id && m.embeds.length > 0);
-    if (!botMsg) await postBotInfoMessage(existing);
+    // Always delete old message and repost so it stays up to date
+    const messages = await existing.messages.fetch({ limit: 10 });
+    const botMsgs = messages.filter(m => m.author.id === client.user.id);
+    for (const msg of botMsgs.values()) await msg.delete().catch(() => {});
+    await postBotInfoMessage(existing);
     return;
   }
 
@@ -477,7 +479,7 @@ async function postBotInfoMessage(channel) {
   const embed = new EmbedBuilder()
     .setTitle("🤖 DinoBot — Server Guide")
     .setDescription(
-      "Hey there! I'm **DinoBot** 🦕 — the custom bot built specifically for **DinoGang**.\n\n" +
+      "Hey there! I'm **DinoBot** 🦕 — the custom bot built specifically for **DinoGang**.\n" +
       "Here's everything I do and how to use me.\n\n" +
 
       "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n" +
@@ -497,18 +499,18 @@ async function postBotInfoMessage(channel) {
       "🎭 `#🎭pick-your-roles` — toggle your Gamers, Creative, Streamer, and Viewer roles\n" +
       "🔔 `#🔔notification-settings` — opt in or out of Stream Alerts and Announcements\n" +
       "🎟️ `#🎟️support` — open a private ticket with the mod team\n" +
-      "🎮 `Gamers` — private space for gamers *(requires Gamers role)*\n" +
-      "🎨 `Creative` — private space for creative types *(requires Creative role)*\n\n" +
+      "🎮 **Gamers** — private space for gamers *(requires Gamers role)*\n" +
+      "🎨 **Creative** — private space for creative types *(requires Creative role)*\n\n" +
 
       "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n" +
 
       "**👋 How Onboarding Works**\n\n" +
-      "When you first join the server DinoBot creates a private channel just for you:\n\n" +
+      "When you first join DinoBot creates a private channel just for you:\n\n" +
       "**Step 1** ✅ — Read and accept the server rules\n" +
       "**Step 2** 🎭 — Pick an optional interest space *(Gamers, Creative, or skip)*\n" +
       "**Step 3** 🎙️ — Pick your content role *(Streamer or Viewer)*\n" +
       "**Step 4** 🔔 — Set your notification preferences *(or skip)*\n\n" +
-      "Once complete your private onboarding channel self-destructs and you have full server access! 🎉\n\n" +
+      "Once complete your private channel self-destructs and you have full server access! 🎉\n\n" +
 
       "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n" +
 
@@ -519,7 +521,8 @@ async function postBotInfoMessage(channel) {
       "💡 **Server Suggestion** — suggest a new feature or change\n" +
       "❓ **Question for Mods** — ask the mod team something privately\n" +
       "⚖️ **Appeal a Ban** — appeal a ban or punishment\n\n" +
-      "⚠️ You can only have **one open ticket at a time**. Once it's resolved you can open another.\n\n" +
+      "⚠️ You can only have **one open ticket at a time**. Once resolved you can open another.\n" +
+      "All tickets are **private** — only you and the mod team can see them.\n\n" +
 
       "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n" +
 
@@ -730,8 +733,7 @@ async function createTicketChannel(guild, member, ticketType, anonymous) {
 
   const channels = await guild.channels.fetch();
   const existing = channels.find(c => c.parentId === ticketsCategoryId && c.name === channelName);
-
-  if (existing) return null; // already has open ticket
+  if (existing) return null;
 
   const permOverwrites = [
     { id: guild.roles.everyone.id, deny: [PermissionFlagsBits.ViewChannel] },
@@ -751,7 +753,7 @@ async function createTicketChannel(guild, member, ticketType, anonymous) {
     name: channelName,
     type: ChannelType.GuildText,
     parent: ticketsCategoryId,
-    permissionOverwrites
+    permissionOverwrites: permOverwrites
   });
 
   openTickets.set(member.id, channel.id);
@@ -820,7 +822,6 @@ client.on("interactionCreate", async (interaction) => {
     const ticketMatch = ticketTypes.find(t => customId === `ticket_${t}`);
 
     if (ticketMatch) {
-      // Check for existing open ticket
       if (openTickets.has(user.id)) {
         const existingChannelId = openTickets.get(user.id);
         await interaction.reply({
@@ -843,7 +844,7 @@ client.on("interactionCreate", async (interaction) => {
 
       if (anonymous) {
         await interaction.reply({
-          content: `🔒 Your anonymous ticket has been submitted. The mod team will handle it shortly.`,
+          content: "🔒 Your anonymous ticket has been submitted. The mod team will handle it shortly.",
           flags: 64
         });
       } else {
@@ -1042,7 +1043,7 @@ client.on("interactionCreate", async (interaction) => {
     }
 
     if (customId.startsWith("onboard_notif_")) {
-      const stripped = customId.replace(`onboard_notif_`, "").replace(`_${memberId}`, "");
+      const stripped = customId.replace("onboard_notif_", "").replace(`_${memberId}`, "");
 
       if (stripped.includes("stream")) await member.roles.add(ROLE_IDS.streamAlerts);
       if (stripped.includes("announcements")) await member.roles.add(ROLE_IDS.announcements);
