@@ -33,12 +33,15 @@ const ROLE_IDS = {
   gurls: "1480674490231816403",
   mods: "1480282547769573538",
   admin: "1480083446704509091",
-  owner: "1480082698159525909"
+  owner: "1480082698159525909",
+  streamAlerts: "1480729998339080232",
+  announcements: "1480730218896556075"
 };
 
 let rulesMessageId = null;
 let onboardingCategoryId = null;
 let pickRolesChannelId = null;
+let notificationChannelId = null;
 
 // ----------------------------
 // GLOBAL ERROR LOGGING
@@ -80,6 +83,7 @@ client.once("clientReady", async () => {
     await setupOnboardingCategory();
     await setupRulesMessage();
     await setupPickRolesChannel();
+    await setupNotificationChannel();
     await lockChannelsForUnverified();
     console.log("✅ Onboarding system ready");
   } catch (err) {
@@ -142,11 +146,9 @@ async function setupPickRolesChannel() {
   if (existing) {
     pickRolesChannelId = existing.id;
     console.log("ℹ️ Pick your roles channel already exists");
-
     const messages = await existing.messages.fetch({ limit: 5 });
     const botMsg = messages.find(m => m.author.id === client.user.id && m.embeds.length > 0);
     if (botMsg) return;
-
     await postPickRolesMessage(existing);
     return;
   }
@@ -156,20 +158,11 @@ async function setupPickRolesChannel() {
     type: ChannelType.GuildText,
     parent: INFO_CATEGORY_ID,
     permissionOverwrites: [
-      {
-        id: guild.roles.everyone.id,
-        deny: [PermissionFlagsBits.ViewChannel]
-      },
-      {
-        id: ROLE_IDS.unverified,
-        deny: [PermissionFlagsBits.ViewChannel]
-      },
+      { id: guild.roles.everyone.id, deny: [PermissionFlagsBits.ViewChannel] },
+      { id: ROLE_IDS.unverified, deny: [PermissionFlagsBits.ViewChannel] },
       {
         id: ROLE_IDS.goofyGoobers,
-        allow: [
-          PermissionFlagsBits.ViewChannel,
-          PermissionFlagsBits.ReadMessageHistory
-        ],
+        allow: [PermissionFlagsBits.ViewChannel, PermissionFlagsBits.ReadMessageHistory],
         deny: [PermissionFlagsBits.SendMessages]
       }
     ]
@@ -177,7 +170,6 @@ async function setupPickRolesChannel() {
 
   pickRolesChannelId = channel.id;
   console.log("✅ Pick your roles channel created");
-
   await postPickRolesMessage(channel);
 }
 
@@ -206,33 +198,92 @@ async function postPickRolesMessage(channel) {
     .setFooter({ text: "DinoBot • Role Selection" });
 
   const genderRow = new ActionRowBuilder().addComponents(
-    new ButtonBuilder()
-      .setCustomId("roles_bros")
-      .setLabel("BROS")
-      .setEmoji("😎")
-      .setStyle(ButtonStyle.Primary),
-    new ButtonBuilder()
-      .setCustomId("roles_gurls")
-      .setLabel("Gurls")
-      .setEmoji("💅")
-      .setStyle(ButtonStyle.Primary)
+    new ButtonBuilder().setCustomId("roles_bros").setLabel("BROS").setEmoji("😎").setStyle(ButtonStyle.Primary),
+    new ButtonBuilder().setCustomId("roles_gurls").setLabel("Gurls").setEmoji("💅").setStyle(ButtonStyle.Primary)
   );
 
   const contentRow = new ActionRowBuilder().addComponents(
-    new ButtonBuilder()
-      .setCustomId("roles_streamer")
-      .setLabel("Streamer")
-      .setEmoji("🎮")
-      .setStyle(ButtonStyle.Success),
-    new ButtonBuilder()
-      .setCustomId("roles_viewer")
-      .setLabel("Viewer")
-      .setEmoji("👀")
-      .setStyle(ButtonStyle.Secondary)
+    new ButtonBuilder().setCustomId("roles_streamer").setLabel("Streamer").setEmoji("🎮").setStyle(ButtonStyle.Success),
+    new ButtonBuilder().setCustomId("roles_viewer").setLabel("Viewer").setEmoji("👀").setStyle(ButtonStyle.Secondary)
   );
 
   await channel.send({ embeds: [embed], components: [genderRow, contentRow] });
   console.log("✅ Pick your roles message posted");
+}
+
+// ----------------------------
+// SETUP NOTIFICATION CHANNEL
+// ----------------------------
+async function setupNotificationChannel() {
+  const guild = await client.guilds.fetch(GUILD_ID);
+  const channels = await guild.channels.fetch();
+
+  const existing = channels.find(
+    c => c.parentId === INFO_CATEGORY_ID && c.name === "🔔notification-settings"
+  );
+
+  if (existing) {
+    notificationChannelId = existing.id;
+    console.log("ℹ️ Notification settings channel already exists");
+    const messages = await existing.messages.fetch({ limit: 5 });
+    const botMsg = messages.find(m => m.author.id === client.user.id && m.embeds.length > 0);
+    if (botMsg) return;
+    await postNotificationMessage(existing);
+    return;
+  }
+
+  const channel = await guild.channels.create({
+    name: "🔔notification-settings",
+    type: ChannelType.GuildText,
+    parent: INFO_CATEGORY_ID,
+    permissionOverwrites: [
+      { id: guild.roles.everyone.id, deny: [PermissionFlagsBits.ViewChannel] },
+      { id: ROLE_IDS.unverified, deny: [PermissionFlagsBits.ViewChannel] },
+      {
+        id: ROLE_IDS.goofyGoobers,
+        allow: [PermissionFlagsBits.ViewChannel, PermissionFlagsBits.ReadMessageHistory],
+        deny: [PermissionFlagsBits.SendMessages]
+      }
+    ]
+  });
+
+  notificationChannelId = channel.id;
+  console.log("✅ Notification settings channel created");
+  await postNotificationMessage(channel);
+}
+
+// ----------------------------
+// POST NOTIFICATION MESSAGE
+// ----------------------------
+async function postNotificationMessage(channel) {
+  const embed = new EmbedBuilder()
+    .setTitle("🔔 Notification Settings")
+    .setDescription(
+      "Choose which notifications you want to receive.\n\n" +
+      "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n" +
+      "🔴 **Stream Alerts** — get pinged when a DinoGang member goes live on Twitch\n\n" +
+      "📢 **Announcements** — get pinged for important server announcements\n\n" +
+      "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n" +
+      "*Clicking a button will toggle the notification on or off. Only you can see the confirmation message.*"
+    )
+    .setColor(0x9146FF)
+    .setFooter({ text: "DinoBot • Notification Settings" });
+
+  const row = new ActionRowBuilder().addComponents(
+    new ButtonBuilder()
+      .setCustomId("notif_stream_alerts")
+      .setLabel("Stream Alerts")
+      .setEmoji("🔴")
+      .setStyle(ButtonStyle.Danger),
+    new ButtonBuilder()
+      .setCustomId("notif_announcements")
+      .setLabel("Announcements")
+      .setEmoji("📢")
+      .setStyle(ButtonStyle.Primary)
+  );
+
+  await channel.send({ embeds: [embed], components: [row] });
+  console.log("✅ Notification settings message posted");
 }
 
 // ----------------------------
@@ -326,13 +377,12 @@ async function setupRulesMessage() {
 client.on("guildMemberAdd", async (member) => {
   try {
     console.log(`👋 New member joined: ${member.user.tag}`);
-
     await member.roles.add(ROLE_IDS.unverified);
     console.log(`✅ Assigned Unverified role to ${member.user.tag}`);
 
     const guild = await client.guilds.fetch(GUILD_ID);
-
     const welcomeChannel = await client.channels.fetch(WELCOME_CHANNEL_ID);
+
     const welcomeEmbed = new EmbedBuilder()
       .setTitle(`🦕 Welcome to the server, ${member.user.username}!`)
       .setDescription(
@@ -376,30 +426,14 @@ async function createOnboardingChannel(guild, member) {
       type: ChannelType.GuildText,
       parent: onboardingCategoryId,
       permissionOverwrites: [
-        {
-          id: guild.roles.everyone.id,
-          deny: [PermissionFlagsBits.ViewChannel]
-        },
+        { id: guild.roles.everyone.id, deny: [PermissionFlagsBits.ViewChannel] },
         {
           id: member.id,
-          allow: [
-            PermissionFlagsBits.ViewChannel,
-            PermissionFlagsBits.SendMessages,
-            PermissionFlagsBits.ReadMessageHistory
-          ]
+          allow: [PermissionFlagsBits.ViewChannel, PermissionFlagsBits.SendMessages, PermissionFlagsBits.ReadMessageHistory]
         },
-        {
-          id: ROLE_IDS.mods,
-          allow: [PermissionFlagsBits.ViewChannel, PermissionFlagsBits.ReadMessageHistory]
-        },
-        {
-          id: ROLE_IDS.admin,
-          allow: [PermissionFlagsBits.ViewChannel, PermissionFlagsBits.ReadMessageHistory]
-        },
-        {
-          id: ROLE_IDS.owner,
-          allow: [PermissionFlagsBits.ViewChannel, PermissionFlagsBits.ReadMessageHistory]
-        }
+        { id: ROLE_IDS.mods, allow: [PermissionFlagsBits.ViewChannel, PermissionFlagsBits.ReadMessageHistory] },
+        { id: ROLE_IDS.admin, allow: [PermissionFlagsBits.ViewChannel, PermissionFlagsBits.ReadMessageHistory] },
+        { id: ROLE_IDS.owner, allow: [PermissionFlagsBits.ViewChannel, PermissionFlagsBits.ReadMessageHistory] }
       ]
     });
 
@@ -432,7 +466,7 @@ async function createOnboardingChannel(guild, member) {
         "*By clicking **Accept Rules** below you confirm you are 18+ and agree to follow all server rules.*"
       )
       .setColor(0x9146FF)
-      .setFooter({ text: "Step 1 of 3 — Accept Rules" });
+      .setFooter({ text: "Step 1 of 4 — Accept Rules" });
 
     const rulesRow = new ActionRowBuilder().addComponents(
       new ButtonBuilder()
@@ -459,14 +493,42 @@ client.on("interactionCreate", async (interaction) => {
   const member = await guild.members.fetch(user.id);
 
   try {
-    // Pick your roles buttons (toggle)
+
+    // ----------------------------
+    // NOTIFICATION SETTINGS BUTTONS
+    // ----------------------------
+    if (customId === "notif_stream_alerts") {
+      if (member.roles.cache.has(ROLE_IDS.streamAlerts)) {
+        await member.roles.remove(ROLE_IDS.streamAlerts);
+        await interaction.reply({ content: "🔕 **Stream Alerts** disabled — you won't be pinged when someone goes live.", flags: 64 });
+      } else {
+        await member.roles.add(ROLE_IDS.streamAlerts);
+        await interaction.reply({ content: "🔔 **Stream Alerts** enabled — you'll be pinged when someone goes live!", flags: 64 });
+      }
+      return;
+    }
+
+    if (customId === "notif_announcements") {
+      if (member.roles.cache.has(ROLE_IDS.announcements)) {
+        await member.roles.remove(ROLE_IDS.announcements);
+        await interaction.reply({ content: "🔕 **Announcements** disabled — you won't be pinged for server announcements.", flags: 64 });
+      } else {
+        await member.roles.add(ROLE_IDS.announcements);
+        await interaction.reply({ content: "🔔 **Announcements** enabled — you'll be pinged for important server announcements!", flags: 64 });
+      }
+      return;
+    }
+
+    // ----------------------------
+    // PICK YOUR ROLES BUTTONS
+    // ----------------------------
     if (customId === "roles_bros") {
       if (member.roles.cache.has(ROLE_IDS.bros)) {
         await member.roles.remove(ROLE_IDS.bros);
-        await interaction.reply({ content: "✅ **BROS** 😎 role removed!", ephemeral: true });
+        await interaction.reply({ content: "✅ **BROS** 😎 role removed!", flags: 64 });
       } else {
         await member.roles.add(ROLE_IDS.bros);
-        await interaction.reply({ content: "✅ **BROS** 😎 role assigned!", ephemeral: true });
+        await interaction.reply({ content: "✅ **BROS** 😎 role assigned!", flags: 64 });
       }
       return;
     }
@@ -474,10 +536,10 @@ client.on("interactionCreate", async (interaction) => {
     if (customId === "roles_gurls") {
       if (member.roles.cache.has(ROLE_IDS.gurls)) {
         await member.roles.remove(ROLE_IDS.gurls);
-        await interaction.reply({ content: "✅ **Gurls** 💅 role removed!", ephemeral: true });
+        await interaction.reply({ content: "✅ **Gurls** 💅 role removed!", flags: 64 });
       } else {
         await member.roles.add(ROLE_IDS.gurls);
-        await interaction.reply({ content: "✅ **Gurls** 💅 role assigned!", ephemeral: true });
+        await interaction.reply({ content: "✅ **Gurls** 💅 role assigned!", flags: 64 });
       }
       return;
     }
@@ -485,10 +547,10 @@ client.on("interactionCreate", async (interaction) => {
     if (customId === "roles_streamer") {
       if (member.roles.cache.has(ROLE_IDS.streamer)) {
         await member.roles.remove(ROLE_IDS.streamer);
-        await interaction.reply({ content: "✅ **Streamer** 🎮 role removed!", ephemeral: true });
+        await interaction.reply({ content: "✅ **Streamer** 🎮 role removed!", flags: 64 });
       } else {
         await member.roles.add(ROLE_IDS.streamer);
-        await interaction.reply({ content: "✅ **Streamer** 🎮 role assigned!", ephemeral: true });
+        await interaction.reply({ content: "✅ **Streamer** 🎮 role assigned!", flags: 64 });
       }
       return;
     }
@@ -496,20 +558,22 @@ client.on("interactionCreate", async (interaction) => {
     if (customId === "roles_viewer") {
       if (member.roles.cache.has(ROLE_IDS.viewer)) {
         await member.roles.remove(ROLE_IDS.viewer);
-        await interaction.reply({ content: "✅ **Viewer** 👀 role removed!", ephemeral: true });
+        await interaction.reply({ content: "✅ **Viewer** 👀 role removed!", flags: 64 });
       } else {
         await member.roles.add(ROLE_IDS.viewer);
-        await interaction.reply({ content: "✅ **Viewer** 👀 role assigned!", ephemeral: true });
+        await interaction.reply({ content: "✅ **Viewer** 👀 role assigned!", flags: 64 });
       }
       return;
     }
 
-    // Onboarding buttons
+    // ----------------------------
+    // ONBOARDING BUTTONS
+    // ----------------------------
     const parts = customId.split("_");
     const memberId = parts[parts.length - 1];
 
     if (memberId !== user.id) {
-      await interaction.reply({ content: "❌ These buttons are not for you!", ephemeral: true });
+      await interaction.reply({ content: "❌ These buttons are not for you!", flags: 64 });
       return;
     }
 
@@ -523,9 +587,9 @@ client.on("interactionCreate", async (interaction) => {
         embeds: [
           new EmbedBuilder()
             .setTitle("✅ Rules Accepted!")
-            .setDescription("You're verified and have full access to the server! Now let's pick your roles.")
+            .setDescription("You're verified! Now let's get your roles set up.")
             .setColor(0x57F287)
-            .setFooter({ text: "Step 1 of 3 — Complete ✅" })
+            .setFooter({ text: "Step 1 of 4 — Complete ✅" })
         ],
         components: []
       });
@@ -541,9 +605,9 @@ client.on("interactionCreate", async (interaction) => {
         embeds: [
           new EmbedBuilder()
             .setTitle("😎 BROS role assigned!")
-            .setDescription("Nice! One more selection...")
+            .setDescription("Nice! Keep going...")
             .setColor(0x9146FF)
-            .setFooter({ text: "Step 2 of 3 — Complete ✅" })
+            .setFooter({ text: "Step 2 of 4 — Complete ✅" })
         ],
         components: []
       });
@@ -557,9 +621,9 @@ client.on("interactionCreate", async (interaction) => {
         embeds: [
           new EmbedBuilder()
             .setTitle("💅 Gurls role assigned!")
-            .setDescription("Nice! One more selection...")
+            .setDescription("Nice! Keep going...")
             .setColor(0x9146FF)
-            .setFooter({ text: "Step 2 of 3 — Complete ✅" })
+            .setFooter({ text: "Step 2 of 4 — Complete ✅" })
         ],
         components: []
       });
@@ -572,9 +636,9 @@ client.on("interactionCreate", async (interaction) => {
         embeds: [
           new EmbedBuilder()
             .setTitle("⏭️ Skipped!")
-            .setDescription("No worries! One more selection...")
+            .setDescription("No worries! Keep going...")
             .setColor(0x9146FF)
-            .setFooter({ text: "Step 2 of 3 — Complete ✅" })
+            .setFooter({ text: "Step 2 of 4 — Complete ✅" })
         ],
         components: []
       });
@@ -589,13 +653,13 @@ client.on("interactionCreate", async (interaction) => {
         embeds: [
           new EmbedBuilder()
             .setTitle("🎮 Streamer role assigned!")
-            .setDescription("All done!")
+            .setDescription("Almost done!")
             .setColor(0x57F287)
-            .setFooter({ text: "Step 3 of 3 — Complete ✅" })
+            .setFooter({ text: "Step 3 of 4 — Complete ✅" })
         ],
         components: []
       });
-      await finishOnboarding(interaction.channel, member);
+      await sendNotificationSelection(interaction.channel, member);
       return;
     }
 
@@ -605,19 +669,46 @@ client.on("interactionCreate", async (interaction) => {
         embeds: [
           new EmbedBuilder()
             .setTitle("👀 Viewer role assigned!")
-            .setDescription("All done!")
+            .setDescription("Almost done!")
             .setColor(0x57F287)
-            .setFooter({ text: "Step 3 of 3 — Complete ✅" })
+            .setFooter({ text: "Step 3 of 4 — Complete ✅" })
         ],
         components: []
       });
+      await sendNotificationSelection(interaction.channel, member);
+      return;
+    }
+
+    // Step 4 — Notification preferences
+    if (customId.startsWith("onboard_notif_")) {
+      const selections = customId.replace(`onboard_notif_`, "").replace(`_${memberId}`, "").split("_and_");
+
+      if (selections.includes("stream")) await member.roles.add(ROLE_IDS.streamAlerts);
+      if (selections.includes("announcements")) await member.roles.add(ROLE_IDS.announcements);
+
+      const selected = [];
+      if (selections.includes("stream")) selected.push("🔴 Stream Alerts");
+      if (selections.includes("announcements")) selected.push("📢 Announcements");
+      if (selections.includes("skip")) selected.push("None");
+
+      await interaction.update({
+        embeds: [
+          new EmbedBuilder()
+            .setTitle("🔔 Notifications set!")
+            .setDescription(selected.length ? `You selected: **${selected.join(", ")}**\n\nYou can change this anytime in #🔔notification-settings.` : "No notifications selected. You can opt in anytime in #🔔notification-settings.")
+            .setColor(0x57F287)
+            .setFooter({ text: "Step 4 of 4 — Complete ✅" })
+        ],
+        components: []
+      });
+
       await finishOnboarding(interaction.channel, member);
       return;
     }
 
   } catch (err) {
     console.error("❌ Button interaction error:", err);
-    await interaction.reply({ content: "❌ Something went wrong. Please contact a mod.", ephemeral: true }).catch(() => {});
+    await interaction.reply({ content: "❌ Something went wrong. Please contact a mod.", flags: 64 }).catch(() => {});
   }
 });
 
@@ -636,29 +727,16 @@ async function sendGenderRoleSelection(channel, member) {
       "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n" +
       "⚠️ **This role is completely optional.**\n" +
       "BROS & Gurls roles exist in good faith for members who enjoy hanging out in a more relaxed same-gender space. " +
-      "These unlock private hidden channels. You are under no obligation to pick one. " +
-      "Skipping will not affect your access to the server in any way.\n\n" +
+      "These unlock private hidden channels. You are under no obligation to pick one.\n\n" +
       "*This selection is completely private. Nobody else can see what you choose.*"
     )
     .setColor(0x9146FF)
-    .setFooter({ text: "Step 2 of 3 — Pick a role or skip" });
+    .setFooter({ text: "Step 2 of 4 — Pick a role or skip" });
 
   const row = new ActionRowBuilder().addComponents(
-    new ButtonBuilder()
-      .setCustomId(`onboard_bros_${member.id}`)
-      .setLabel("BROS")
-      .setEmoji("😎")
-      .setStyle(ButtonStyle.Primary),
-    new ButtonBuilder()
-      .setCustomId(`onboard_gurls_${member.id}`)
-      .setLabel("Gurls")
-      .setEmoji("💅")
-      .setStyle(ButtonStyle.Primary),
-    new ButtonBuilder()
-      .setCustomId(`onboard_skip_gender_${member.id}`)
-      .setLabel("Skip")
-      .setEmoji("⏭️")
-      .setStyle(ButtonStyle.Secondary)
+    new ButtonBuilder().setCustomId(`onboard_bros_${member.id}`).setLabel("BROS").setEmoji("😎").setStyle(ButtonStyle.Primary),
+    new ButtonBuilder().setCustomId(`onboard_gurls_${member.id}`).setLabel("Gurls").setEmoji("💅").setStyle(ButtonStyle.Primary),
+    new ButtonBuilder().setCustomId(`onboard_skip_gender_${member.id}`).setLabel("Skip").setEmoji("⏭️").setStyle(ButtonStyle.Secondary)
   );
 
   await channel.send({ embeds: [embed], components: [row] });
@@ -671,24 +749,44 @@ async function sendContentRoleSelection(channel, member) {
   const embed = new EmbedBuilder()
     .setTitle("🎮 Content Role")
     .setDescription(
-      "Last one! Are you a streamer or a viewer?\n\n" +
+      "Are you a streamer or a viewer?\n\n" +
       "🎮 **Streamer** — You stream on Twitch\n" +
       "👀 **Viewer** — You watch streams"
     )
     .setColor(0x9146FF)
-    .setFooter({ text: "Step 3 of 3 — Pick your content role" });
+    .setFooter({ text: "Step 3 of 4 — Pick your content role" });
 
   const row = new ActionRowBuilder().addComponents(
-    new ButtonBuilder()
-      .setCustomId(`onboard_streamer_${member.id}`)
-      .setLabel("Streamer")
-      .setEmoji("🎮")
-      .setStyle(ButtonStyle.Primary),
-    new ButtonBuilder()
-      .setCustomId(`onboard_viewer_${member.id}`)
-      .setLabel("Viewer")
-      .setEmoji("👀")
-      .setStyle(ButtonStyle.Secondary)
+    new ButtonBuilder().setCustomId(`onboard_streamer_${member.id}`).setLabel("Streamer").setEmoji("🎮").setStyle(ButtonStyle.Primary),
+    new ButtonBuilder().setCustomId(`onboard_viewer_${member.id}`).setLabel("Viewer").setEmoji("👀").setStyle(ButtonStyle.Secondary)
+  );
+
+  await channel.send({ embeds: [embed], components: [row] });
+}
+
+// ----------------------------
+// STEP 4 — NOTIFICATION SELECTION
+// ----------------------------
+async function sendNotificationSelection(channel, member) {
+  const embed = new EmbedBuilder()
+    .setTitle("🔔 Notification Preferences")
+    .setDescription(
+      "Last step! Choose which notifications you want to receive.\n\n" +
+      "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n" +
+      "🔴 **Stream Alerts** — get pinged when a DinoGang member goes live\n\n" +
+      "📢 **Announcements** — get pinged for important server announcements\n\n" +
+      "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n" +
+      "⏭️ Skip to opt out of all pings.\n\n" +
+      "*You can change this anytime in #🔔notification-settings.*"
+    )
+    .setColor(0x9146FF)
+    .setFooter({ text: "Step 4 of 4 — Notification preferences" });
+
+  const row = new ActionRowBuilder().addComponents(
+    new ButtonBuilder().setCustomId(`onboard_notif_stream_${member.id}`).setLabel("Stream Alerts").setEmoji("🔴").setStyle(ButtonStyle.Danger),
+    new ButtonBuilder().setCustomId(`onboard_notif_announcements_${member.id}`).setLabel("Announcements").setEmoji("📢").setStyle(ButtonStyle.Primary),
+    new ButtonBuilder().setCustomId(`onboard_notif_stream_and_announcements_${member.id}`).setLabel("Both").setEmoji("🔔").setStyle(ButtonStyle.Success),
+    new ButtonBuilder().setCustomId(`onboard_notif_skip_${member.id}`).setLabel("Skip").setEmoji("⏭️").setStyle(ButtonStyle.Secondary)
   );
 
   await channel.send({ embeds: [embed], components: [row] });
@@ -877,7 +975,7 @@ app.post("/twitch/eventsub", async (req, res) => {
         .setFooter({ text: "Twitch Live Alert • DinoBot" })
         .setTimestamp();
 
-      await channel.send({ content: "@here 🔴 A friend just went live!", embeds: [embed] });
+      await channel.send({ content: "<@&1480729998339080232> 🔴 A friend just went live!", embeds: [embed] });
       console.log(`✅ Alert sent for ${broadcaster_user_name}`);
       return res.status(200).send("Notification processed");
     }
