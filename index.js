@@ -33,6 +33,8 @@ const MOD_LOGS_CHANNEL_ID = "1480080173469532199";
 const SPAM_LOGS_CHANNEL_ID = "1480080173868257333";
 const MOD_CHAT_CHANNEL_ID = "1480080173868257334";
 const MRBEAN_ANNOUNCEMENTS_CHANNEL_ID = "1480080173868257336";
+const MRBEAN_CATEGORY_ID = "1480099688739901531";
+const STREAMING_CATEGORY_ID = "1480080174123978822";
 const MRBEAN_TWITCH_LOGIN = "mrbeanthedino";
 
 const ROLE_IDS = {
@@ -52,6 +54,7 @@ const ROLE_IDS = {
 
 const MIN_ACCOUNT_AGE_DAYS = 7;
 const BIRTHDAY_FILE = "./birthdays.json";
+const SCHEDULE_FILE = "./schedules.json";
 
 let birthdays = {};
 if (fs.existsSync(BIRTHDAY_FILE)) {
@@ -59,8 +62,18 @@ if (fs.existsSync(BIRTHDAY_FILE)) {
   catch { birthdays = {}; }
 }
 
+let schedules = {};
+if (fs.existsSync(SCHEDULE_FILE)) {
+  try { schedules = JSON.parse(fs.readFileSync(SCHEDULE_FILE, "utf8")); }
+  catch { schedules = {}; }
+}
+
 function saveBirthdays() {
   fs.writeFileSync(BIRTHDAY_FILE, JSON.stringify(birthdays, null, 2));
+}
+
+function saveSchedules() {
+  fs.writeFileSync(SCHEDULE_FILE, JSON.stringify(schedules, null, 2));
 }
 
 let onboardingCategoryId = null;
@@ -68,6 +81,10 @@ let modTicketsChannelId = null;
 let staffCategoryId = null;
 let ticketsCategoryId = null;
 let birthdayCategoryId = null;
+let mrbeanScheduleChannelId = null;
+let crewScheduleChannelId = null;
+let crewScheduleMessageId = null;
+let mrbeanScheduleMessageId = null;
 
 const openTickets = new Map();
 
@@ -102,6 +119,8 @@ client.once("clientReady", async () => {
     await setupModTicketsChannel();
     await setupBirthdayCategory();
     await setupBirthdayRegisterChannel();
+    await setupMrBeanScheduleChannel();
+    await setupCrewScheduleChannel();
     await lockChannelsForUnverified();
     console.log("✅ All systems ready");
   } catch (err) {
@@ -222,6 +241,173 @@ async function celebrateBirthday(guild, userId) {
     console.log(`✅ Birthday celebrated for ${member.user.tag}`);
   } catch (err) {
     console.error(`❌ Error celebrating birthday for ${userId}:`, err);
+  }
+}
+
+// ----------------------------
+// MRBEAN SCHEDULE CHANNEL
+// ----------------------------
+async function setupMrBeanScheduleChannel() {
+  const guild = await client.guilds.fetch(GUILD_ID);
+  const channels = await guild.channels.fetch();
+  let channel = channels.find(c => c.parentId === MRBEAN_CATEGORY_ID && c.name === "📅mrbean-schedule");
+  if (!channel) {
+    channel = await guild.channels.create({
+      name: "📅mrbean-schedule",
+      type: ChannelType.GuildText,
+      parent: MRBEAN_CATEGORY_ID,
+      permissionOverwrites: [
+        { id: guild.roles.everyone.id, allow: [PermissionFlagsBits.ViewChannel, PermissionFlagsBits.ReadMessageHistory], deny: [PermissionFlagsBits.SendMessages] },
+        { id: ROLE_IDS.unverified, deny: [PermissionFlagsBits.ViewChannel] }
+      ]
+    });
+    console.log("✅ MrBean schedule channel created");
+  } else {
+    console.log("ℹ️ MrBean schedule channel already exists");
+  }
+  mrbeanScheduleChannelId = channel.id;
+  const messages = await channel.messages.fetch({ limit: 10 });
+  const existing = messages.find(m => m.author.id === client.user.id && m.embeds.length > 0);
+  if (existing) {
+    mrbeanScheduleMessageId = existing.id;
+    console.log("ℹ️ MrBean schedule message already exists");
+    return;
+  }
+  await postMrBeanSchedule(channel);
+}
+
+async function postMrBeanSchedule(channel) {
+  const embed = buildMrBeanScheduleEmbed();
+  const row = new ActionRowBuilder().addComponents(
+    new ButtonBuilder().setCustomId("mrbean_update_schedule").setLabel("Update My Schedule").setEmoji("📅").setStyle(ButtonStyle.Primary)
+  );
+  const msg = await channel.send({ embeds: [embed], components: [row] });
+  mrbeanScheduleMessageId = msg.id;
+  console.log("✅ MrBean schedule posted");
+}
+
+function buildMrBeanScheduleEmbed() {
+  return new EmbedBuilder()
+    .setTitle("📅 MrBeanTheDino — Stream Schedule")
+    .setDescription(
+      "Here's when MrBeanTheDino is live! All times are **PST**.\n\n" +
+      "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n" +
+      "🕹️ **Retro Day**\n" +
+      "📆 Monday / Tuesday / Wednesday\n" +
+      "🕐 2:00PM – 6:00PM PST\n" +
+      "🎮 Retro Games\n\n" +
+      "🎲 **Regular Day**\n" +
+      "📆 Thursday / Friday\n" +
+      "🕐 2:00PM – 6:00PM PST\n" +
+      "🎮 Variety\n\n" +
+      "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n" +
+      "*Schedule subject to change. Follow on Twitch for live notifications!*"
+    )
+    .setColor(0x9146FF)
+    .setFooter({ text: "DinoBot • Stream Schedule • Last updated" })
+    .setTimestamp();
+}
+
+// ----------------------------
+// CREW SCHEDULE CHANNEL
+// ----------------------------
+async function setupCrewScheduleChannel() {
+  const guild = await client.guilds.fetch(GUILD_ID);
+  const channels = await guild.channels.fetch();
+  let channel = channels.find(c => c.parentId === STREAMING_CATEGORY_ID && c.name === "📅crew-schedule");
+  if (!channel) {
+    channel = await guild.channels.create({
+      name: "📅crew-schedule",
+      type: ChannelType.GuildText,
+      parent: STREAMING_CATEGORY_ID,
+      permissionOverwrites: [
+        { id: guild.roles.everyone.id, allow: [PermissionFlagsBits.ViewChannel, PermissionFlagsBits.ReadMessageHistory], deny: [PermissionFlagsBits.SendMessages] },
+        { id: ROLE_IDS.unverified, deny: [PermissionFlagsBits.ViewChannel] }
+      ]
+    });
+    console.log("✅ Crew schedule channel created");
+  } else {
+    console.log("ℹ️ Crew schedule channel already exists");
+  }
+  crewScheduleChannelId = channel.id;
+  const messages = await channel.messages.fetch({ limit: 10 });
+  const existing = messages.find(m => m.author.id === client.user.id && m.embeds.length > 0);
+  if (existing) {
+    crewScheduleMessageId = existing.id;
+    console.log("ℹ️ Crew schedule message already exists");
+    return;
+  }
+  await postCrewSchedule(channel);
+}
+
+async function postCrewSchedule(channel) {
+  const embed = buildCrewScheduleEmbed();
+  const row = new ActionRowBuilder().addComponents(
+    new ButtonBuilder().setCustomId("crew_update_schedule").setLabel("Update My Schedule").setEmoji("📅").setStyle(ButtonStyle.Primary)
+  );
+  const msg = await channel.send({ embeds: [embed], components: [row] });
+  crewScheduleMessageId = msg.id;
+  console.log("✅ Crew schedule posted");
+}
+
+function buildCrewScheduleEmbed() {
+  const entries = Object.entries(schedules);
+  let description =
+    "Click **Update My Schedule** below to add or update your stream schedule.\n\n" +
+    "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n";
+
+  if (entries.length === 0) {
+    description += "*No schedules set yet. Streamers — add yours below!*\n\n";
+  } else {
+    for (const [userId, data] of entries) {
+      description +=
+        `🎮 **${data.username}**\n` +
+        `📆 ${data.days}  🕐 ${data.time}  🎮 ${data.game}\n\n`;
+    }
+  }
+
+  description += "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n*All times in the streamer's local timezone unless noted.*";
+
+  return new EmbedBuilder()
+    .setTitle("📅 DinoGang Crew — Stream Schedule")
+    .setDescription(description)
+    .setColor(0x9146FF)
+    .setFooter({ text: "DinoBot • Crew Schedule • Last updated" })
+    .setTimestamp();
+}
+
+async function updateCrewScheduleEmbed() {
+  try {
+    const channel = await client.channels.fetch(crewScheduleChannelId);
+    const msg = await channel.messages.fetch(crewScheduleMessageId);
+    const embed = buildCrewScheduleEmbed();
+    const row = new ActionRowBuilder().addComponents(
+      new ButtonBuilder().setCustomId("crew_update_schedule").setLabel("Update My Schedule").setEmoji("📅").setStyle(ButtonStyle.Primary)
+    );
+    await msg.edit({ embeds: [embed], components: [row] });
+    console.log("✅ Crew schedule updated");
+  } catch (err) {
+    console.error("❌ Error updating crew schedule:", err);
+  }
+}
+
+async function updateMrBeanScheduleEmbed(newDescription) {
+  try {
+    const channel = await client.channels.fetch(mrbeanScheduleChannelId);
+    const msg = await channel.messages.fetch(mrbeanScheduleMessageId);
+    const embed = new EmbedBuilder()
+      .setTitle("📅 MrBeanTheDino — Stream Schedule")
+      .setDescription(newDescription)
+      .setColor(0x9146FF)
+      .setFooter({ text: "DinoBot • Stream Schedule • Last updated" })
+      .setTimestamp();
+    const row = new ActionRowBuilder().addComponents(
+      new ButtonBuilder().setCustomId("mrbean_update_schedule").setLabel("Update My Schedule").setEmoji("📅").setStyle(ButtonStyle.Primary)
+    );
+    await msg.edit({ embeds: [embed], components: [row] });
+    console.log("✅ MrBean schedule updated");
+  } catch (err) {
+    console.error("❌ Error updating MrBean schedule:", err);
   }
 }
 
@@ -499,6 +685,7 @@ async function postBotInfoMessage(channel) {
       "🎟️ **Ticket System** — submit private tickets to the mod team for reports, feedback, suggestions, and more\n\n" +
       "⚠️ **Account Age Filter** — accounts under 7 days old are flagged and reviewed by mods\n\n" +
       "🎂 **Birthday System** — register your birthday and get your own celebration channel for the day\n\n" +
+      "📅 **Stream Schedules** — MrBeanTheDino's schedule and the full crew schedule, always up to date\n\n" +
       "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n" +
       "**🗺️ Server Features**\n\n" +
       "📋 `#rules` — server rules, read-only\n" +
@@ -506,6 +693,8 @@ async function postBotInfoMessage(channel) {
       "🔔 `#🔔notification-settings` — opt in or out of Stream Alerts and Announcements\n" +
       "🎟️ `#🎟️support` — open a private ticket with the mod team\n" +
       "🎂 `#🎂birthday-register` — register your birthday for a special celebration\n" +
+      "📅 `#📅mrbean-schedule` — MrBeanTheDino's personal stream schedule\n" +
+      "📅 `#📅crew-schedule` — full DinoGang crew stream schedule\n" +
       "🎮 **Gamers** — private space for gamers *(requires Gamers role)*\n" +
       "🎨 **Creative** — private space for creative types *(requires Creative role)*\n\n" +
       "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n" +
@@ -870,6 +1059,42 @@ client.on("interactionCreate", async (interaction) => {
       return;
     }
 
+    // ----------------------------
+    // MRBEAN SCHEDULE UPDATE
+    // ----------------------------
+    if (customId === "mrbean_update_schedule") {
+      if (user.id !== guild.ownerId && !member.roles.cache.has(ROLE_IDS.admin) && !member.roles.cache.has(ROLE_IDS.mods)) {
+        await interaction.reply({ content: "❌ Only MrBeanTheDino and mods can update this schedule.", flags: 64 });
+        return;
+      }
+      const modal = new ModalBuilder().setCustomId("mrbean_schedule_modal").setTitle("📅 Update Your Stream Schedule");
+      modal.addComponents(
+        new ActionRowBuilder().addComponents(new TextInputBuilder().setCustomId("schedule_content").setLabel("Your Schedule").setStyle(TextInputStyle.Paragraph).setPlaceholder(
+          "e.g.\nMonday / Tuesday / Wednesday — 2PM-6PM PST — Retro Games\nThursday / Friday — 2PM-6PM PST — Variety"
+        ).setMinLength(10).setMaxLength(1000).setRequired(true))
+      );
+      await interaction.showModal(modal);
+      return;
+    }
+
+    // ----------------------------
+    // CREW SCHEDULE UPDATE
+    // ----------------------------
+    if (customId === "crew_update_schedule") {
+      if (!member.roles.cache.has(ROLE_IDS.streamer) && !member.roles.cache.has(ROLE_IDS.mods) && !member.roles.cache.has(ROLE_IDS.admin) && !member.roles.cache.has(ROLE_IDS.owner)) {
+        await interaction.reply({ content: "❌ Only streamers can update the crew schedule. Assign yourself the Streamer role in #🎭pick-your-roles first!", flags: 64 });
+        return;
+      }
+      const modal = new ModalBuilder().setCustomId("crew_schedule_modal").setTitle("📅 Update Your Schedule");
+      modal.addComponents(
+        new ActionRowBuilder().addComponents(new TextInputBuilder().setCustomId("sched_days").setLabel("Stream Days").setStyle(TextInputStyle.Short).setPlaceholder("e.g. Mon / Wed / Fri").setMaxLength(100).setRequired(true)),
+        new ActionRowBuilder().addComponents(new TextInputBuilder().setCustomId("sched_time").setLabel("Stream Time").setStyle(TextInputStyle.Short).setPlaceholder("e.g. 8PM EST").setMaxLength(50).setRequired(true)),
+        new ActionRowBuilder().addComponents(new TextInputBuilder().setCustomId("sched_game").setLabel("What do you play?").setStyle(TextInputStyle.Short).setPlaceholder("e.g. Variety / Fortnite / Horror Games").setMaxLength(100).setRequired(true))
+      );
+      await interaction.showModal(modal);
+      return;
+    }
+
     if (customId === "birthday_set") {
       const modal = new ModalBuilder().setCustomId("birthday_modal_set").setTitle("🎂 Set Your Birthday");
       modal.addComponents(
@@ -1033,6 +1258,48 @@ client.on("interactionCreate", async (interaction) => {
   if (!interaction.isModalSubmit()) return;
   const { customId, user, guild } = interaction;
   const member = await guild.members.fetch(user.id);
+
+  if (customId === "mrbean_schedule_modal") {
+    const content = interaction.fields.getTextInputValue("schedule_content").trim();
+    const embed = new EmbedBuilder()
+      .setTitle("📅 MrBeanTheDino — Stream Schedule")
+      .setDescription(
+        "Here's when MrBeanTheDino is live!\n\n" +
+        "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n" +
+        content + "\n\n" +
+        "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n" +
+        "*Schedule subject to change. Follow on Twitch for live notifications!*"
+      )
+      .setColor(0x9146FF)
+      .setFooter({ text: "DinoBot • Stream Schedule • Last updated" })
+      .setTimestamp();
+    try {
+      const channel = await client.channels.fetch(mrbeanScheduleChannelId);
+      const msg = await channel.messages.fetch(mrbeanScheduleMessageId);
+      const row = new ActionRowBuilder().addComponents(
+        new ButtonBuilder().setCustomId("mrbean_update_schedule").setLabel("Update My Schedule").setEmoji("📅").setStyle(ButtonStyle.Primary)
+      );
+      await msg.edit({ embeds: [embed], components: [row] });
+      await interaction.reply({ content: "✅ Your schedule has been updated!", flags: 64 });
+      console.log(`✅ MrBean schedule updated by ${user.tag}`);
+    } catch (err) {
+      console.error("❌ Error updating MrBean schedule:", err);
+      await interaction.reply({ content: "❌ Failed to update schedule. Please try again.", flags: 64 });
+    }
+    return;
+  }
+
+  if (customId === "crew_schedule_modal") {
+    const days = interaction.fields.getTextInputValue("sched_days").trim();
+    const time = interaction.fields.getTextInputValue("sched_time").trim();
+    const game = interaction.fields.getTextInputValue("sched_game").trim();
+    schedules[user.id] = { username: member.displayName, days, time, game };
+    saveSchedules();
+    await updateCrewScheduleEmbed();
+    await interaction.reply({ content: `✅ Your schedule has been updated!\n\n📆 **${days}** • 🕐 **${time}** • 🎮 **${game}**`, flags: 64 });
+    console.log(`✅ Crew schedule updated by ${user.tag}`);
+    return;
+  }
 
   if (customId === "birthday_modal_set") {
     const month = parseInt(interaction.fields.getTextInputValue("birthday_month").trim());
@@ -1228,7 +1495,9 @@ app.post("/twitch/eventsub", async (req, res) => {
       const thumbnailUrl = stream.thumbnail_url.replace("{width}", "1280").replace("{height}", "720");
       const isMrBean = broadcaster_user_login.toLowerCase() === MRBEAN_TWITCH_LOGIN.toLowerCase();
       const targetChannelId = isMrBean ? MRBEAN_ANNOUNCEMENTS_CHANNEL_ID : process.env.DISCORD_CHANNEL_ID;
-      const pingContent = isMrBean ? `<@&${ROLE_IDS.announcements}> 🔴 MrBeanTheDino is LIVE!` : `<@&${ROLE_IDS.streamAlerts}> 🔴 A friend just went live!`;
+      const pingContent = isMrBean
+        ? `<@&${ROLE_IDS.announcements}> <@&${ROLE_IDS.streamAlerts}> 🔴 MrBeanTheDino is LIVE!`
+        : `<@&${ROLE_IDS.streamAlerts}> 🔴 A friend just went live!`;
       const channel = await client.channels.fetch(targetChannelId);
       if (!channel) return res.status(200).send("Missing channel");
       const embed = new EmbedBuilder()
