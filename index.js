@@ -37,6 +37,48 @@ const MRBEAN_CATEGORY_ID = "1480099688739901531";
 const STREAMING_CATEGORY_ID = "1480080174123978822";
 const MRBEAN_TWITCH_LOGIN = "mrbeanthedino";
 
+const FILTER_EXEMPT_CHANNELS = new Set([
+  "1480089758490165433",
+  "1480090291469025380",
+  "1480092967464210502",
+  "1480093057226379345",
+  "1480093454196412416",
+  "1480093712473391165",
+  "1480700138090659931",
+  "1480700462461096038",
+]);
+
+const FILTERED_WORDS = [
+  "nigger", "faggot", "fag", "chink", "spic", "kike", "gook", "tranny", "dyke"
+];
+
+const STRIKES_FILE = "./strikes.json";
+let strikes = {};
+if (fs.existsSync(STRIKES_FILE)) {
+  try { strikes = JSON.parse(fs.readFileSync(STRIKES_FILE, "utf8")); }
+  catch { strikes = {}; }
+}
+
+function saveStrikes() {
+  fs.writeFileSync(STRIKES_FILE, JSON.stringify(strikes, null, 2));
+}
+
+function getStrikes(userId) {
+  const now = Date.now();
+  const SEVEN_DAYS = 7 * 24 * 60 * 60 * 1000;
+  if (!strikes[userId]) return 0;
+  strikes[userId] = strikes[userId].filter(s => now - s.timestamp < SEVEN_DAYS);
+  saveStrikes();
+  return strikes[userId].length;
+}
+
+function addStrike(userId) {
+  if (!strikes[userId]) strikes[userId] = [];
+  strikes[userId].push({ timestamp: Date.now() });
+  saveStrikes();
+  return strikes[userId].length;
+}
+
 const ROLE_IDS = {
   unverified: "1480647122285236438",
   goofyGoobers: "1480088633540083732",
@@ -139,6 +181,141 @@ client.on("error", (err) => console.error("❌ Discord client error:", err));
 client.on("shardDisconnect", (event, id) => console.warn(`⚠️ Shard ${id} disconnected`));
 client.on("shardError", (error, shardId) => console.error(`❌ Shard ${shardId} error:`, error));
 client.on("invalidated", () => console.error("❌ Discord session invalidated"));
+
+// ----------------------------
+// WORD FILTER
+// ----------------------------
+client.on("messageCreate", async (message) => {
+  if (message.author.bot) return;
+  if (!message.guild) return;
+  if (FILTER_EXEMPT_CHANNELS.has(message.channel.id)) return;
+
+  const member = message.member;
+  if (!member) return;
+
+  // Skip mods, admins, owners
+  if (
+    member.roles.cache.has(ROLE_IDS.mods) ||
+    member.roles.cache.has(ROLE_IDS.admin) ||
+    member.roles.cache.has(ROLE_IDS.owner)
+  ) return;
+
+  const content = message.content.toLowerCase().replace(/[^a-z]/g, "");
+  const triggered = FILTERED_WORDS.find(word => content.includes(word.toLowerCase().replace(/[^a-z]/g, "")));
+  if (!triggered) return;
+
+  try {
+    await message.delete();
+  } catch { /* already deleted */ }
+
+  const strikeCount = addStrike(message.author.id);
+  const userId = message.author.id;
+
+  // Log to mod channel
+  try {
+    const modLogs = await client.channels.fetch(MOD_LOGS_CHANNEL_ID);
+    const strikeLabel = strikeCount === 1 ? "⚠️ Strike 1 — Warning" : strikeCount === 2 ? "⏱️ Strike 2 — Timeout" : "🔨 Strike 3 — Ban";
+    const logEmbed = new EmbedBuilder()
+      .setTitle(`🚫 Word Filter Triggered — ${strikeLabel}`)
+      .setDescription(
+        `**Member:** ${message.author} (${message.author.tag})\n` +
+        `**Channel:** ${message.channel}\n` +
+        `**Word Detected:** ||\`${triggered}\`||\n` +
+        `**Strike:** ${strikeCount}/3\n` +
+        `**Message Content:** ||\`${message.content}\`||`
+      )
+      .setColor(strikeCount === 1 ? 0xFFA500 : strikeCount === 2 ? 0xFF6B00 : 0xED4245)
+      .setThumbnail(message.author.displayAvatarURL({ dynamic: true }))
+      .setTimestamp()
+      .setFooter({ text: "DinoBot • Word Filter" });
+    await modLogs.send({ embeds: [logEmbed] });
+  } catch (err) {
+    console.error("❌ Error logging to mod channel:", err);
+  }
+
+  // Strike 1 — Public warning
+  if (strikeCount === 1) {
+    try {
+      const warn = await message.channel.send({
+        embeds: [new EmbedBuilder()
+          .setTitle("⚠️ Watch Your Language")
+          .setDescription(`${message.author} — that word isn't allowed here. **This is your first warning.**\n\nContinued use will result in a timeout and then a ban.`)
+          .setColor(0xFFA500)
+          .setFooter({ text: "DinoBot • Word Filter • Strike 1/3" })]
+      });
+      setTimeout(() => warn.delete().catch(() => {}), 10000);
+    } catch (err) {
+      console.error("❌ Error sending strike 1 warning:", err);
+    }
+
+    try {
+      await message.author.send({
+        embeds: [new EmbedBuilder()
+          .setTitle("⚠️ Warning — DinoGang")
+          .setDescription(`You used a word that isn't allowed in **DinoGang**.\n\n**Strike 1/3** — This is your first and only warning.\n\nAnother offense will result in a **10 minute timeout**. A third offense will result in a **permanent ban**.\n\nPlease review the server rules.`)
+          .setColor(0xFFA500)
+          .setFooter({ text: "DinoBot • Word Filter" })]
+      });
+    } catch { /* DMs disabled */ }
+  }
+
+  // Strike 2 — Timeout
+  if (strikeCount === 2) {
+    try {
+      const timeoutDuration = 10 * 60 * 1000; // 10 minutes
+      await member.timeout(timeoutDuration, "Word filter — Strike 2");
+      const warn = await message.channel.send({
+        embeds: [new EmbedBuilder()
+          .setTitle("⏱️ Member Timed Out")
+          .setDescription(`${message.author} has been timed out for **10 minutes** for repeated use of prohibited language.\n\n**Strike 2/3** — One more offense will result in a permanent ban.`)
+          .setColor(0xFF6B00)
+          .setFooter({ text: "DinoBot • Word Filter • Strike 2/3" })]
+      });
+      setTimeout(() => warn.delete().catch(() => {}), 15000);
+    } catch (err) {
+      console.error("❌ Error timing out member:", err);
+    }
+
+    try {
+      await message.author.send({
+        embeds: [new EmbedBuilder()
+          .setTitle("⏱️ You've Been Timed Out — DinoGang")
+          .setDescription(`You've been timed out for **10 minutes** for using prohibited language in **DinoGang**.\n\n**Strike 2/3** — This is your final warning.\n\nOne more offense will result in a **permanent ban** from the server.`)
+          .setColor(0xFF6B00)
+          .setFooter({ text: "DinoBot • Word Filter" })]
+      });
+    } catch { /* DMs disabled */ }
+  }
+
+  // Strike 3 — Ban
+  if (strikeCount >= 3) {
+    try {
+      await message.author.send({
+        embeds: [new EmbedBuilder()
+          .setTitle("🔨 You've Been Banned — DinoGang")
+          .setDescription(`You have been **permanently banned** from **DinoGang** for repeated use of prohibited language.\n\n**Strike 3/3** — This is the result of multiple warnings and a timeout.\n\nThis decision is final.`)
+          .setColor(0xED4245)
+          .setFooter({ text: "DinoBot • Word Filter" })]
+      });
+    } catch { /* DMs disabled */ }
+
+    try {
+      await member.ban({ reason: "Word filter — Strike 3 — repeated hate speech" });
+      const warn = await message.channel.send({
+        embeds: [new EmbedBuilder()
+          .setTitle("🔨 Member Banned")
+          .setDescription(`A member has been permanently banned for repeated use of prohibited language.\n\n**Strike 3/3**`)
+          .setColor(0xED4245)
+          .setFooter({ text: "DinoBot • Word Filter • Strike 3/3" })]
+      });
+      setTimeout(() => warn.delete().catch(() => {}), 15000);
+    } catch (err) {
+      console.error("❌ Error banning member:", err);
+    }
+  }
+
+  console.log(`🚫 Word filter triggered: ${message.author.tag} — strike ${strikeCount}/3 — word: ${triggered}`);
+});
 
 // ----------------------------
 // BIRTHDAY SCHEDULER
@@ -245,7 +422,7 @@ async function celebrateBirthday(guild, userId) {
 }
 
 // ----------------------------
-// MRBEAN SCHEDULE CHANNEL
+// SETUP MRBEAN SCHEDULE CHANNEL
 // ----------------------------
 async function setupMrBeanScheduleChannel() {
   const guild = await client.guilds.fetch(GUILD_ID);
@@ -309,7 +486,7 @@ function buildMrBeanScheduleEmbed() {
 }
 
 // ----------------------------
-// CREW SCHEDULE CHANNEL
+// SETUP CREW SCHEDULE CHANNEL
 // ----------------------------
 async function setupCrewScheduleChannel() {
   const guild = await client.guilds.fetch(GUILD_ID);
@@ -355,19 +532,14 @@ function buildCrewScheduleEmbed() {
   let description =
     "Click **Update My Schedule** below to add or update your stream schedule.\n\n" +
     "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n";
-
   if (entries.length === 0) {
     description += "*No schedules set yet. Streamers — add yours below!*\n\n";
   } else {
     for (const [userId, data] of entries) {
-      description +=
-        `🎮 **${data.username}**\n` +
-        `📆 ${data.days}  🕐 ${data.time}  🎮 ${data.game}\n\n`;
+      description += `🎮 **${data.username}**\n📆 ${data.days}  🕐 ${data.time}  🎮 ${data.game}\n\n`;
     }
   }
-
   description += "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n*All times in the streamer's local timezone unless noted.*";
-
   return new EmbedBuilder()
     .setTitle("📅 DinoGang Crew — Stream Schedule")
     .setDescription(description)
@@ -388,26 +560,6 @@ async function updateCrewScheduleEmbed() {
     console.log("✅ Crew schedule updated");
   } catch (err) {
     console.error("❌ Error updating crew schedule:", err);
-  }
-}
-
-async function updateMrBeanScheduleEmbed(newDescription) {
-  try {
-    const channel = await client.channels.fetch(mrbeanScheduleChannelId);
-    const msg = await channel.messages.fetch(mrbeanScheduleMessageId);
-    const embed = new EmbedBuilder()
-      .setTitle("📅 MrBeanTheDino — Stream Schedule")
-      .setDescription(newDescription)
-      .setColor(0x9146FF)
-      .setFooter({ text: "DinoBot • Stream Schedule • Last updated" })
-      .setTimestamp();
-    const row = new ActionRowBuilder().addComponents(
-      new ButtonBuilder().setCustomId("mrbean_update_schedule").setLabel("Update My Schedule").setEmoji("📅").setStyle(ButtonStyle.Primary)
-    );
-    await msg.edit({ embeds: [embed], components: [row] });
-    console.log("✅ MrBean schedule updated");
-  } catch (err) {
-    console.error("❌ Error updating MrBean schedule:", err);
   }
 }
 
@@ -686,6 +838,7 @@ async function postBotInfoMessage(channel) {
       "⚠️ **Account Age Filter** — accounts under 7 days old are flagged and reviewed by mods\n\n" +
       "🎂 **Birthday System** — register your birthday and get your own celebration channel for the day\n\n" +
       "📅 **Stream Schedules** — MrBeanTheDino's schedule and the full crew schedule, always up to date\n\n" +
+      "🚫 **Word Filter** — auto-deletes hate speech with a 3 strike system (warning → timeout → ban)\n\n" +
       "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n" +
       "**🗺️ Server Features**\n\n" +
       "📋 `#rules` — server rules, read-only\n" +
@@ -1059,9 +1212,6 @@ client.on("interactionCreate", async (interaction) => {
       return;
     }
 
-    // ----------------------------
-    // MRBEAN SCHEDULE UPDATE
-    // ----------------------------
     if (customId === "mrbean_update_schedule") {
       if (user.id !== guild.ownerId && !member.roles.cache.has(ROLE_IDS.admin) && !member.roles.cache.has(ROLE_IDS.mods)) {
         await interaction.reply({ content: "❌ Only MrBeanTheDino and mods can update this schedule.", flags: 64 });
@@ -1077,9 +1227,6 @@ client.on("interactionCreate", async (interaction) => {
       return;
     }
 
-    // ----------------------------
-    // CREW SCHEDULE UPDATE
-    // ----------------------------
     if (customId === "crew_update_schedule") {
       if (!member.roles.cache.has(ROLE_IDS.streamer) && !member.roles.cache.has(ROLE_IDS.mods) && !member.roles.cache.has(ROLE_IDS.admin) && !member.roles.cache.has(ROLE_IDS.owner)) {
         await interaction.reply({ content: "❌ Only streamers can update the crew schedule. Assign yourself the Streamer role in #🎭pick-your-roles first!", flags: 64 });
