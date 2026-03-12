@@ -1647,13 +1647,19 @@ async function createEventSubSubscription(token, userId) {
   return { ok: res.ok, status: res.status, data };
 }
 
-async function getStreamInfo(token, userId) {
-  const res = await fetch(`https://api.twitch.tv/helix/streams?user_id=${encodeURIComponent(userId)}`, { headers: { "Client-ID": process.env.TWITCH_CLIENT_ID, "Authorization": `Bearer ${token}` } });
-  const data = await res.json();
-  if (!res.ok) throw new Error(`Failed to get stream info: ${JSON.stringify(data)}`);
-  return data.data[0] || null;
+async function getStreamInfoWithRetry(token, userId, retries = 3, delayMs = 15000) {
+  for (let i = 0; i < retries; i++) {
+    const res = await fetch(`https://api.twitch.tv/helix/streams?user_id=${encodeURIComponent(userId)}`, {
+      headers: { "Client-ID": process.env.TWITCH_CLIENT_ID, "Authorization": `Bearer ${token}` }
+    });
+    const data = await res.json();
+    if (!res.ok) throw new Error(`Failed to get stream info: ${JSON.stringify(data)}`);
+    if (data.data[0]) return data.data[0];
+    console.log(`⏳ Stream data not ready for ${userId} — retry ${i + 1}/${retries} in ${delayMs / 1000}s`);
+    await new Promise(resolve => setTimeout(resolve, delayMs));
+  }
+  return null;
 }
-
 async function subscribeToTwitchUsers() {
   const logins = process.env.TWITCH_USER_LOGINS.split(",").map(l => l.trim().toLowerCase()).filter(Boolean);
   console.log("Monitoring:", logins.join(", "));
@@ -1690,7 +1696,7 @@ app.post("/twitch/eventsub", async (req, res) => {
       const { broadcaster_user_id, broadcaster_user_login, broadcaster_user_name } = req.body.event;
       console.log(`📡 ${broadcaster_user_name} went live`);
       const token = await getTwitchToken();
-      const stream = await getStreamInfo(token, broadcaster_user_id);
+      const stream = await getStreamInfoWithRetry(token, broadcaster_user_id);
       if (!stream) return res.status(200).send("Missing data");
       const thumbnailUrl = stream.thumbnail_url.replace("{width}", "1280").replace("{height}", "720");
       const isMrBean = broadcaster_user_login.toLowerCase() === MRBEAN_TWITCH_LOGIN.toLowerCase();
