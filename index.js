@@ -291,6 +291,7 @@ client.once("clientReady", async () => {
     await setupLookingToPlayChannel();
     await setupPZChannels();
     await lockChannelsForUnverified();
+    await postFeatureAnnouncement();
     console.log("✅ All systems ready");
   } catch (err) { console.error("❌ Setup error:", err); }
   try {
@@ -1987,6 +1988,68 @@ app.post("/twitch/eventsub", async (req, res) => {
     return res.status(200).send("OK");
   } catch (err) { console.error("❌ Webhook error:", err); return res.status(500).send("Internal Server Error"); }
 });
+
+
+// ----------------------------
+// ONE-TIME FEATURE ANNOUNCEMENT
+// ----------------------------
+async function postFeatureAnnouncement() {
+  try {
+    const channel = await client.channels.fetch(MRBEAN_ANNOUNCEMENTS_CHANNEL_ID);
+    const messages = await channel.messages.fetch({ limit: 50 });
+    const alreadyPosted = messages.find(m =>
+      m.author.id === client.user.id &&
+      m.embeds[0]?.title?.includes("DinoBot just got a massive upgrade")
+    );
+    if (alreadyPosted) { console.log("\u2139\uFE0F Feature announcement already posted"); return; }
+
+    const sep = "\u2501".repeat(30);
+    const lines = [
+      "Hey DinoGang! A ton of new features just dropped. Here\'s everything you need to know \uD83D\uDC47",
+      "",
+      sep,
+      "",
+      "\uD83C\uDFAD **Pick Your Roles**",
+      "Head to <#1481032622460370954> and grab your roles!",
+      "\uD83C\uDFAE Gamers  \uD83C\uDFA8 Creative  \uD83C\uDFA4 Streamer  \uD83D\uDC40 Viewer",
+      "",
+      "\uD83D\uDD14 **Notification Settings**",
+      "Opt in or out of stream alerts and announcements in <#1481033002308997120>",
+      "",
+      "\uD83C\uDF82 **Birthday System**",
+      "Register your birthday in <#1480764987034304535> \u2014 DinoBot will give you your own celebration channel on your special day!",
+      "",
+      "\uD83C\uDFAE **Game Suggestions**",
+      "Got a game you want the crew to play? Drop it in <#1480103931173408881> and let everyone vote!",
+      "",
+      "\uD83D\uDD79\uFE0F **Looking to Play**",
+      "Want to find someone to game with right now? Post in <#1481751127841050735> \u2014 auto-expires after 8 hours!",
+      "",
+      "\uD83D\uDCC5 **Stream Schedules**",
+      "Check when the crew is live \u2014 MrBean\'s schedule and the full crew schedule are now up!",
+      "",
+      "\uD83C\uDF9F\uFE0F **Support Tickets**",
+      "Need to reach the mods privately? Head to <#1481034688578719774> \u2014 reports are fully anonymous!",
+      "",
+      "\uD83E\uDDDF **Dark Sorrows \u2014 Project Zomboid**",
+      "We have a dedicated PZ server running! Check out <#1480253903407681599> to apply for a spot. Slots are limited so don\'t sleep on it!",
+      "",
+      sep,
+      "",
+      "*DinoBot is always watching. Stay dino. \uD83E\uDD95*"
+    ];
+
+    const embed = new EmbedBuilder()
+      .setTitle("\uD83E\uDD95 DinoBot just got a massive upgrade!")
+      .setDescription(lines.join("\n"))
+      .setColor(0x9146FF)
+      .setFooter({ text: "DinoBot \u2022 DinoGang" })
+      .setTimestamp();
+
+    await channel.send({ content: "@everyone", embeds: [embed] });
+    console.log("\u2705 Feature announcement posted");
+  } catch (err) { console.error("\u274C Error posting feature announcement:", err); }
+}
 
 // ----------------------------
 // HEALTH CHECK + SERVER BOOT
