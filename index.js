@@ -52,6 +52,93 @@ const FILTERED_WORDS = [
   "nigger", "faggot", "fag", "chink", "spic", "kike", "gook", "tranny", "dyke"
 ];
 
+// ----------------------------
+// RAID PROTECTION
+// ----------------------------
+const RAID_JOIN_THRESHOLD = 5;
+const RAID_JOIN_WINDOW = 60 * 1000;
+let recentJoins = [];
+let raidLockdownActive = false;
+
+async function checkRaid(guild, newMember) {
+  const now = Date.now();
+  recentJoins = recentJoins.filter(t => now - t.timestamp < RAID_JOIN_WINDOW);
+  recentJoins.push({ timestamp: now, userId: newMember.id, tag: newMember.user.tag });
+
+  if (raidLockdownActive) {
+    try {
+      await newMember.send({
+        embeds: [new EmbedBuilder()
+          .setTitle("🔒 Server Temporarily Locked")
+          .setDescription("DinoGang is currently in lockdown mode due to a potential raid.\n\nThe server will reopen shortly. Please try joining again later! 🦕")
+          .setColor(0xED4245)
+          .setFooter({ text: "DinoGang • Anti-Raid Protection" })]
+      });
+    } catch { /* DMs disabled */ }
+    await newMember.kick("Server lockdown active — anti-raid protection");
+    console.log(`🦵 Kicked during lockdown: ${newMember.user.tag}`);
+    return true;
+  }
+
+  if (recentJoins.length >= RAID_JOIN_THRESHOLD) {
+    await activateRaidLockdown(guild);
+    return true;
+  }
+  return false;
+}
+
+async function activateRaidLockdown(guild) {
+  if (raidLockdownActive) return;
+  raidLockdownActive = true;
+  console.log("🚨 RAID DETECTED — Lockdown activated");
+
+  try {
+    await guild.setVerificationLevel(4, "Anti-raid lockdown activated");
+    console.log("✅ Verification level set to highest");
+  } catch (err) {
+    console.error("❌ Error setting verification level:", err);
+  }
+
+  const joinerList = recentJoins.map(j => `• <@${j.userId}> (${j.tag})`).join("\n");
+
+  try {
+    const modLogs = await client.channels.fetch(MOD_LOGS_CHANNEL_ID);
+    const embed = new EmbedBuilder()
+      .setTitle("🚨 RAID DETECTED — Server Locked Down")
+      .setDescription(
+        `**${recentJoins.length} accounts joined within 60 seconds.**\n\n` +
+        `**Recent Joiners:**\n${joinerList}\n\n` +
+        `━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n` +
+        `🔒 Server verification level has been set to maximum.\n` +
+        `New joins are being auto-kicked until lockdown is lifted.\n\n` +
+        `*Click the button below to lift the lockdown when it's safe.*`
+      )
+      .setColor(0xED4245)
+      .setTimestamp()
+      .setFooter({ text: "DinoBot • Anti-Raid Protection" });
+    const row = new ActionRowBuilder().addComponents(
+      new ButtonBuilder().setCustomId("raid_lift_lockdown").setLabel("Lift Lockdown").setEmoji("🔓").setStyle(ButtonStyle.Success)
+    );
+    await modLogs.send({ content: `<@&${ROLE_IDS.mods}> <@&${ROLE_IDS.admin}> 🚨 RAID ALERT!`, embeds: [embed], components: [row] });
+  } catch (err) {
+    console.error("❌ Error sending raid alert:", err);
+  }
+}
+
+async function liftRaidLockdown(guild) {
+  raidLockdownActive = false;
+  recentJoins = [];
+  try {
+    await guild.setVerificationLevel(1, "Anti-raid lockdown lifted");
+    console.log("✅ Raid lockdown lifted — verification level restored");
+  } catch (err) {
+    console.error("❌ Error restoring verification level:", err);
+  }
+}
+
+// ----------------------------
+// STRIKE SYSTEM
+// ----------------------------
 const STRIKES_FILE = "./strikes.json";
 let strikes = {};
 if (fs.existsSync(STRIKES_FILE)) {
@@ -61,15 +148,6 @@ if (fs.existsSync(STRIKES_FILE)) {
 
 function saveStrikes() {
   fs.writeFileSync(STRIKES_FILE, JSON.stringify(strikes, null, 2));
-}
-
-function getStrikes(userId) {
-  const now = Date.now();
-  const SEVEN_DAYS = 7 * 24 * 60 * 60 * 1000;
-  if (!strikes[userId]) return 0;
-  strikes[userId] = strikes[userId].filter(s => now - s.timestamp < SEVEN_DAYS);
-  saveStrikes();
-  return strikes[userId].length;
 }
 
 function addStrike(userId) {
@@ -189,29 +267,18 @@ client.on("messageCreate", async (message) => {
   if (message.author.bot) return;
   if (!message.guild) return;
   if (FILTER_EXEMPT_CHANNELS.has(message.channel.id)) return;
-
   const member = message.member;
   if (!member) return;
-
-  // Skip mods, admins, owners
   if (
     member.roles.cache.has(ROLE_IDS.mods) ||
     member.roles.cache.has(ROLE_IDS.admin) ||
     member.roles.cache.has(ROLE_IDS.owner)
   ) return;
-
   const content = message.content.toLowerCase().replace(/[^a-z]/g, "");
   const triggered = FILTERED_WORDS.find(word => content.includes(word.toLowerCase().replace(/[^a-z]/g, "")));
   if (!triggered) return;
-
-  try {
-    await message.delete();
-  } catch { /* already deleted */ }
-
+  try { await message.delete(); } catch { /* already deleted */ }
   const strikeCount = addStrike(message.author.id);
-  const userId = message.author.id;
-
-  // Log to mod channel
   try {
     const modLogs = await client.channels.fetch(MOD_LOGS_CHANNEL_ID);
     const strikeLabel = strikeCount === 1 ? "⚠️ Strike 1 — Warning" : strikeCount === 2 ? "⏱️ Strike 2 — Timeout" : "🔨 Strike 3 — Ban";
@@ -232,8 +299,6 @@ client.on("messageCreate", async (message) => {
   } catch (err) {
     console.error("❌ Error logging to mod channel:", err);
   }
-
-  // Strike 1 — Public warning
   if (strikeCount === 1) {
     try {
       const warn = await message.channel.send({
@@ -244,10 +309,7 @@ client.on("messageCreate", async (message) => {
           .setFooter({ text: "DinoBot • Word Filter • Strike 1/3" })]
       });
       setTimeout(() => warn.delete().catch(() => {}), 10000);
-    } catch (err) {
-      console.error("❌ Error sending strike 1 warning:", err);
-    }
-
+    } catch (err) { console.error("❌ Error sending strike 1 warning:", err); }
     try {
       await message.author.send({
         embeds: [new EmbedBuilder()
@@ -258,12 +320,9 @@ client.on("messageCreate", async (message) => {
       });
     } catch { /* DMs disabled */ }
   }
-
-  // Strike 2 — Timeout
   if (strikeCount === 2) {
     try {
-      const timeoutDuration = 10 * 60 * 1000; // 10 minutes
-      await member.timeout(timeoutDuration, "Word filter — Strike 2");
+      await member.timeout(10 * 60 * 1000, "Word filter — Strike 2");
       const warn = await message.channel.send({
         embeds: [new EmbedBuilder()
           .setTitle("⏱️ Member Timed Out")
@@ -272,10 +331,7 @@ client.on("messageCreate", async (message) => {
           .setFooter({ text: "DinoBot • Word Filter • Strike 2/3" })]
       });
       setTimeout(() => warn.delete().catch(() => {}), 15000);
-    } catch (err) {
-      console.error("❌ Error timing out member:", err);
-    }
-
+    } catch (err) { console.error("❌ Error timing out member:", err); }
     try {
       await message.author.send({
         embeds: [new EmbedBuilder()
@@ -286,8 +342,6 @@ client.on("messageCreate", async (message) => {
       });
     } catch { /* DMs disabled */ }
   }
-
-  // Strike 3 — Ban
   if (strikeCount >= 3) {
     try {
       await message.author.send({
@@ -298,7 +352,6 @@ client.on("messageCreate", async (message) => {
           .setFooter({ text: "DinoBot • Word Filter" })]
       });
     } catch { /* DMs disabled */ }
-
     try {
       await member.ban({ reason: "Word filter — Strike 3 — repeated hate speech" });
       const warn = await message.channel.send({
@@ -309,11 +362,8 @@ client.on("messageCreate", async (message) => {
           .setFooter({ text: "DinoBot • Word Filter • Strike 3/3" })]
       });
       setTimeout(() => warn.delete().catch(() => {}), 15000);
-    } catch (err) {
-      console.error("❌ Error banning member:", err);
-    }
+    } catch (err) { console.error("❌ Error banning member:", err); }
   }
-
   console.log(`🚫 Word filter triggered: ${message.author.tag} — strike ${strikeCount}/3 — word: ${triggered}`);
 });
 
@@ -362,14 +412,12 @@ async function cleanupBirthdays(guild) {
     for (const member of members.values()) {
       if (member.roles.cache.has(ROLE_IDS.birthday)) {
         await member.roles.remove(ROLE_IDS.birthday).catch(() => {});
-        console.log(`🎂 Removed birthday role from ${member.user.tag}`);
       }
     }
     const channels = await guild.channels.fetch();
     for (const channel of channels.values()) {
       if (channel && channel.parentId === birthdayCategoryId && channel.name.startsWith("🎉happy-birthday-")) {
         await channel.delete().catch(() => {});
-        console.log(`🗑️ Deleted birthday channel: ${channel.name}`);
       }
     }
   } catch (err) {
@@ -380,8 +428,7 @@ async function cleanupBirthdays(guild) {
 async function celebrateBirthday(guild, userId) {
   try {
     const member = await guild.members.fetch(userId).catch(() => null);
-    if (!member) { console.log(`⚠️ Birthday member not found: ${userId}`); return; }
-    console.log(`🎂 It's ${member.user.tag}'s birthday!`);
+    if (!member) return;
     await member.roles.add(ROLE_IDS.birthday).catch(() => {});
     const safeName = member.user.username.toLowerCase().replace(/[^a-z0-9]/g, "");
     const channel = await guild.channels.create({
@@ -396,11 +443,7 @@ async function celebrateBirthday(guild, userId) {
     });
     const embed = new EmbedBuilder()
       .setTitle(`🎂 Happy Birthday, ${member.user.username}! 🎉`)
-      .setDescription(
-        `${member} — today is YOUR day! 🦕🎉\n\n` +
-        "The whole DinoGang is here to celebrate with you!\n\n" +
-        "Drop your birthday wishes below and let's make it a great one! 🎈🎊🥳"
-      )
+      .setDescription(`${member} — today is YOUR day! 🦕🎉\n\nThe whole DinoGang is here to celebrate with you!\n\nDrop your birthday wishes below and let's make it a great one! 🎈🎊🥳`)
       .setThumbnail(member.user.displayAvatarURL({ dynamic: true }))
       .setColor(0xFF73FA)
       .setFooter({ text: "DinoBot • Birthday System" })
@@ -430,9 +473,7 @@ async function setupMrBeanScheduleChannel() {
   let channel = channels.find(c => c.parentId === MRBEAN_CATEGORY_ID && c.name === "📅mrbean-schedule");
   if (!channel) {
     channel = await guild.channels.create({
-      name: "📅mrbean-schedule",
-      type: ChannelType.GuildText,
-      parent: MRBEAN_CATEGORY_ID,
+      name: "📅mrbean-schedule", type: ChannelType.GuildText, parent: MRBEAN_CATEGORY_ID,
       permissionOverwrites: [
         { id: guild.roles.everyone.id, allow: [PermissionFlagsBits.ViewChannel, PermissionFlagsBits.ReadMessageHistory], deny: [PermissionFlagsBits.SendMessages] },
         { id: ROLE_IDS.unverified, deny: [PermissionFlagsBits.ViewChannel] }
@@ -445,11 +486,7 @@ async function setupMrBeanScheduleChannel() {
   mrbeanScheduleChannelId = channel.id;
   const messages = await channel.messages.fetch({ limit: 10 });
   const existing = messages.find(m => m.author.id === client.user.id && m.embeds.length > 0);
-  if (existing) {
-    mrbeanScheduleMessageId = existing.id;
-    console.log("ℹ️ MrBean schedule message already exists");
-    return;
-  }
+  if (existing) { mrbeanScheduleMessageId = existing.id; console.log("ℹ️ MrBean schedule message already exists"); return; }
   await postMrBeanSchedule(channel);
 }
 
@@ -469,14 +506,8 @@ function buildMrBeanScheduleEmbed() {
     .setDescription(
       "Here's when MrBeanTheDino is live! All times are **PST**.\n\n" +
       "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n" +
-      "🕹️ **Retro Day**\n" +
-      "📆 Monday / Tuesday / Wednesday\n" +
-      "🕐 2:00PM – 6:00PM PST\n" +
-      "🎮 Retro Games\n\n" +
-      "🎲 **Regular Day**\n" +
-      "📆 Thursday / Friday\n" +
-      "🕐 2:00PM – 6:00PM PST\n" +
-      "🎮 Variety\n\n" +
+      "🕹️ **Retro Day**\n📆 Monday / Tuesday / Wednesday\n🕐 2:00PM – 6:00PM PST\n🎮 Retro Games\n\n" +
+      "🎲 **Regular Day**\n📆 Thursday / Friday\n🕐 2:00PM – 6:00PM PST\n🎮 Variety\n\n" +
       "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n" +
       "*Schedule subject to change. Follow on Twitch for live notifications!*"
     )
@@ -494,9 +525,7 @@ async function setupCrewScheduleChannel() {
   let channel = channels.find(c => c.parentId === STREAMING_CATEGORY_ID && c.name === "📅crew-schedule");
   if (!channel) {
     channel = await guild.channels.create({
-      name: "📅crew-schedule",
-      type: ChannelType.GuildText,
-      parent: STREAMING_CATEGORY_ID,
+      name: "📅crew-schedule", type: ChannelType.GuildText, parent: STREAMING_CATEGORY_ID,
       permissionOverwrites: [
         { id: guild.roles.everyone.id, allow: [PermissionFlagsBits.ViewChannel, PermissionFlagsBits.ReadMessageHistory], deny: [PermissionFlagsBits.SendMessages] },
         { id: ROLE_IDS.unverified, deny: [PermissionFlagsBits.ViewChannel] }
@@ -509,11 +538,7 @@ async function setupCrewScheduleChannel() {
   crewScheduleChannelId = channel.id;
   const messages = await channel.messages.fetch({ limit: 10 });
   const existing = messages.find(m => m.author.id === client.user.id && m.embeds.length > 0);
-  if (existing) {
-    crewScheduleMessageId = existing.id;
-    console.log("ℹ️ Crew schedule message already exists");
-    return;
-  }
+  if (existing) { crewScheduleMessageId = existing.id; console.log("ℹ️ Crew schedule message already exists"); return; }
   await postCrewSchedule(channel);
 }
 
@@ -529,9 +554,7 @@ async function postCrewSchedule(channel) {
 
 function buildCrewScheduleEmbed() {
   const entries = Object.entries(schedules);
-  let description =
-    "Click **Update My Schedule** below to add or update your stream schedule.\n\n" +
-    "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n";
+  let description = "Click **Update My Schedule** below to add or update your stream schedule.\n\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n";
   if (entries.length === 0) {
     description += "*No schedules set yet. Streamers — add yours below!*\n\n";
   } else {
@@ -839,6 +862,7 @@ async function postBotInfoMessage(channel) {
       "🎂 **Birthday System** — register your birthday and get your own celebration channel for the day\n\n" +
       "📅 **Stream Schedules** — MrBeanTheDino's schedule and the full crew schedule, always up to date\n\n" +
       "🚫 **Word Filter** — auto-deletes hate speech with a 3 strike system (warning → timeout → ban)\n\n" +
+      "🛡️ **Anti-Raid Protection** — detects and locks down the server if a raid is detected\n\n" +
       "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n" +
       "**🗺️ Server Features**\n\n" +
       "📋 `#rules` — server rules, read-only\n" +
@@ -1001,6 +1025,10 @@ async function checkAccountAge(member) {
 client.on("guildMemberAdd", async (member) => {
   try {
     console.log(`👋 New member joined: ${member.user.tag}`);
+
+    const isRaiding = await checkRaid(await client.guilds.fetch(GUILD_ID), member);
+    if (isRaiding) return;
+
     await member.roles.add(ROLE_IDS.unverified);
     const guild = await client.guilds.fetch(GUILD_ID);
     const welcomeChannel = await client.channels.fetch(WELCOME_CHANNEL_ID);
@@ -1045,11 +1073,14 @@ async function createOnboardingChannel(guild, member) {
     });
     console.log(`✅ Created onboarding channel for ${member.user.tag}`);
 
+    // 24hr timeout
     setTimeout(async () => {
       try {
         const freshMember = await guild.members.fetch(member.id).catch(() => null);
-        if (!freshMember) return;
-        if (freshMember.roles.cache.has(ROLE_IDS.unverified)) {
+        const staleChannel = await guild.channels.fetch(channel.id).catch(() => null);
+
+        if (freshMember && freshMember.roles.cache.has(ROLE_IDS.unverified)) {
+          // Never accepted rules — kick them
           try {
             await freshMember.send({
               embeds: [new EmbedBuilder()
@@ -1066,8 +1097,11 @@ async function createOnboardingChannel(guild, member) {
           } catch { /* DMs disabled */ }
           await freshMember.kick("Did not complete onboarding within 24 hours");
           console.log(`🦵 Kicked for incomplete onboarding: ${member.user.tag}`);
+        } else {
+          // Accepted rules but didn't finish — just quietly delete the channel
+          console.log(`🗑️ Cleaning up stale onboarding channel for verified member: ${member.user.tag}`);
         }
-        const staleChannel = await guild.channels.fetch(channel.id).catch(() => null);
+
         if (staleChannel) {
           await staleChannel.delete().catch(() => {});
           console.log(`🗑️ Deleted stale onboarding channel for ${member.user.tag}`);
@@ -1175,6 +1209,33 @@ client.on("interactionCreate", async (interaction) => {
   const member = await guild.members.fetch(user.id);
   try {
 
+    if (customId === "raid_lift_lockdown") {
+      if (!member.roles.cache.has(ROLE_IDS.mods) && !member.roles.cache.has(ROLE_IDS.admin) && !member.roles.cache.has(ROLE_IDS.owner)) {
+        await interaction.reply({ content: "❌ Only mods can lift the lockdown.", flags: 64 });
+        return;
+      }
+      await liftRaidLockdown(guild);
+      await interaction.update({
+        embeds: [EmbedBuilder.from(interaction.message.embeds[0])
+          .setTitle("✅ Lockdown Lifted")
+          .setColor(0x57F287)
+          .setFooter({ text: `Lifted by ${interaction.user.tag} • DinoBot • Anti-Raid Protection` })],
+        components: []
+      });
+      try {
+        const modLogs = await client.channels.fetch(MOD_LOGS_CHANNEL_ID);
+        await modLogs.send({
+          embeds: [new EmbedBuilder()
+            .setTitle("✅ Raid Lockdown Lifted")
+            .setDescription(`Lockdown was lifted by **${interaction.user.tag}**.\n\nServer verification level has been restored to normal.`)
+            .setColor(0x57F287)
+            .setTimestamp()
+            .setFooter({ text: "DinoBot • Anti-Raid Protection" })]
+        });
+      } catch { /* ignore */ }
+      return;
+    }
+
     if (customId.startsWith("agecheck_approve_")) {
       const targetUserId = customId.replace("agecheck_approve_", "");
       await interaction.update({
@@ -1199,7 +1260,6 @@ client.on("interactionCreate", async (interaction) => {
             });
           } catch { /* DMs disabled */ }
           await targetMember.kick("Account too new — under 7 days old");
-          console.log(`🦵 Kicked new account: ${targetUserId}`);
         }
         await interaction.update({
           embeds: [EmbedBuilder.from(interaction.message.embeds[0]).setColor(0xED4245).setTitle("🦵 Member Kicked").setFooter({ text: `Kicked by ${interaction.user.tag} • DinoBot • Account Age Filter` })],
@@ -1207,7 +1267,7 @@ client.on("interactionCreate", async (interaction) => {
         });
       } catch (err) {
         console.error("❌ Error kicking member:", err);
-        await interaction.reply({ content: "❌ Failed to kick member. Do I have Kick Members permission?", flags: 64 });
+        await interaction.reply({ content: "❌ Failed to kick member.", flags: 64 });
       }
       return;
     }
@@ -1219,9 +1279,7 @@ client.on("interactionCreate", async (interaction) => {
       }
       const modal = new ModalBuilder().setCustomId("mrbean_schedule_modal").setTitle("📅 Update Your Stream Schedule");
       modal.addComponents(
-        new ActionRowBuilder().addComponents(new TextInputBuilder().setCustomId("schedule_content").setLabel("Your Schedule").setStyle(TextInputStyle.Paragraph).setPlaceholder(
-          "e.g.\nMonday / Tuesday / Wednesday — 2PM-6PM PST — Retro Games\nThursday / Friday — 2PM-6PM PST — Variety"
-        ).setMinLength(10).setMaxLength(1000).setRequired(true))
+        new ActionRowBuilder().addComponents(new TextInputBuilder().setCustomId("schedule_content").setLabel("Your Schedule").setStyle(TextInputStyle.Paragraph).setPlaceholder("e.g.\nMonday / Tuesday / Wednesday — 2PM-6PM PST — Retro Games\nThursday / Friday — 2PM-6PM PST — Variety").setMinLength(10).setMaxLength(1000).setRequired(true))
       );
       await interaction.showModal(modal);
       return;
@@ -1410,13 +1468,7 @@ client.on("interactionCreate", async (interaction) => {
     const content = interaction.fields.getTextInputValue("schedule_content").trim();
     const embed = new EmbedBuilder()
       .setTitle("📅 MrBeanTheDino — Stream Schedule")
-      .setDescription(
-        "Here's when MrBeanTheDino is live!\n\n" +
-        "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n" +
-        content + "\n\n" +
-        "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n" +
-        "*Schedule subject to change. Follow on Twitch for live notifications!*"
-      )
+      .setDescription("Here's when MrBeanTheDino is live!\n\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n" + content + "\n\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n*Schedule subject to change. Follow on Twitch for live notifications!*")
       .setColor(0x9146FF)
       .setFooter({ text: "DinoBot • Stream Schedule • Last updated" })
       .setTimestamp();
@@ -1428,10 +1480,9 @@ client.on("interactionCreate", async (interaction) => {
       );
       await msg.edit({ embeds: [embed], components: [row] });
       await interaction.reply({ content: "✅ Your schedule has been updated!", flags: 64 });
-      console.log(`✅ MrBean schedule updated by ${user.tag}`);
     } catch (err) {
       console.error("❌ Error updating MrBean schedule:", err);
-      await interaction.reply({ content: "❌ Failed to update schedule. Please try again.", flags: 64 });
+      await interaction.reply({ content: "❌ Failed to update schedule.", flags: 64 });
     }
     return;
   }
@@ -1444,7 +1495,6 @@ client.on("interactionCreate", async (interaction) => {
     saveSchedules();
     await updateCrewScheduleEmbed();
     await interaction.reply({ content: `✅ Your schedule has been updated!\n\n📆 **${days}** • 🕐 **${time}** • 🎮 **${game}**`, flags: 64 });
-    console.log(`✅ Crew schedule updated by ${user.tag}`);
     return;
   }
 
@@ -1457,7 +1507,6 @@ client.on("interactionCreate", async (interaction) => {
     saveBirthdays();
     const monthNames = ["January","February","March","April","May","June","July","August","September","October","November","December"];
     await interaction.reply({ content: `🎂 Your birthday has been set to **${monthNames[month - 1]} ${day}**! DinoBot will celebrate with you on your special day! 🦕🎉`, flags: 64 });
-    console.log(`🎂 Birthday set for ${user.tag}: ${month}/${day}`);
     return;
   }
 
@@ -1552,7 +1601,11 @@ async function sendNotificationSelection(channel, member) {
 
 async function finishOnboarding(channel, member) {
   await channel.send({
-    embeds: [new EmbedBuilder().setTitle("🦕 You're all set!").setDescription("Welcome to the crew! You now have full access to the server. 🎉\n\nThis channel will self-destruct in 30 seconds. See you in there!").setColor(0x57F287).setFooter({ text: "Onboarding complete — channel deleting in 30 seconds" })]
+    embeds: [new EmbedBuilder()
+      .setTitle("🦕 You're all set!")
+      .setDescription("Welcome to the crew! You now have full access to the server. 🎉\n\nThis channel will self-destruct in 30 seconds. See you in there!")
+      .setColor(0x57F287)
+      .setFooter({ text: "Onboarding complete — channel deleting in 30 seconds" })]
   });
   console.log(`✅ Onboarding complete for ${member.user.tag}`);
   setTimeout(async () => { await channel.delete().catch(() => {}); }, 30000);
