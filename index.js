@@ -524,6 +524,12 @@ async function setupPZChannels() {
     await postPZServerControls(statusChannel);
     await updatePZStatusEmbed();
 
+    // #dark-sorrows — pin server connection details (only post if not already there)
+    const alertsChannel = await client.channels.fetch(PZ_ALERTS_CHANNEL_ID);
+    const alertsMessages = await alertsChannel.messages.fetch({ limit: 20 });
+    const existingInfo = alertsMessages.find(m => m.author.id === client.user.id && m.embeds[0]?.title?.includes("How to Connect"));
+    if (!existingInfo) await postPZServerInfo(alertsChannel);
+
     if (pzStatusInterval) clearInterval(pzStatusInterval);
     pzStatusInterval = setInterval(updatePZStatusEmbed, 5 * 60 * 1000);
     console.log("✅ PZ channels set up");
@@ -591,6 +597,50 @@ async function postPZServerControls(channel) {
 
   await channel.send({ embeds: [embed], components: [row] });
   console.log("✅ PZ server controls posted");
+}
+
+// #dark-sorrows — pinned server connection details
+// #dark-sorrows — pinned server connection details
+async function postPZServerInfo(channel) {
+  const ip = process.env.PZ_SERVER_IP || "Not configured";
+  const port = process.env.PZ_SERVER_PORT || "16261";
+  const password = process.env.PZ_SERVER_PASSWORD || "Not configured";
+  const sep = "\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501";
+  const desc = [
+    "**Only share this with approved Dark Sorrows members.**",
+    "",
+    sep,
+    "",
+    `\u{1F310} **Server IP:** \`${ip}\``,
+    `\u{1F522} **Port:** \`${port}\``,
+    `\u{1F511} **Password:** \`${password}\``,
+    "",
+    sep,
+    "",
+    "**\u{1F4D6} How to join:**",
+    "",
+    "1\uFE0F\u20E3 Launch **Project Zomboid**",
+    "2\uFE0F\u20E3 Click **Join** \u2192 **Add Server**",
+    "3\uFE0F\u20E3 Enter the **IP** and **Port** above",
+    "4\uFE0F\u20E3 Enter the **password** when prompted",
+    "5\uFE0F\u20E3 Select your character and survive \u{1F9DF}",
+    "",
+    sep,
+    "",
+    "\u26A0\uFE0F **Build 42 Unstable** \u2014 make sure your game is on the correct branch.",
+    "In Steam: right-click PZ \u2192 Properties \u2192 Betas \u2192 select `b42unstable`",
+    "",
+    "*Having trouble connecting? Ping the crew or open a support ticket.*"
+  ].join("\n");
+  const embed = new EmbedBuilder()
+    .setTitle("\u{1F50C} How to Connect \u2014 Dark Sorrows PZ")
+    .setDescription(desc)
+    .setColor(0xED4245)
+    .setFooter({ text: "DinoBot \u2022 Dark Sorrows PZ \u2022 Server Details" })
+    .setTimestamp();
+  const msg = await channel.send({ embeds: [embed] });
+  try { await msg.pin(); } catch {}
+  console.log("\u2705 PZ server info posted");
 }
 
 // Update the Apply button label in #project-zomboid to reflect paused state
