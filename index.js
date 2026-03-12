@@ -201,6 +201,8 @@ let mrbeanScheduleMessageId = null;
 let pzStatusMessageId = null;
 let pzStatusInterval = null;
 let pzControlPanelMessageId = null;
+let pzApplicationsPaused = false;
+const PZ_MAX_MEMBERS = 4;
 
 // poll state: pollId -> { messageId, channelId, question, options, emojis, isYesNo, endTime, timeout }
 const activePolls = new Map();
@@ -507,27 +509,29 @@ async function updatePZStatusEmbed() {
 
 async function setupPZChannels() {
   try {
+    // #project-zomboid — wipe and repost info+apply panel
     const openChannel = await client.channels.fetch(PZ_OPEN_CHANNEL_ID);
     const openMessages = await openChannel.messages.fetch({ limit: 10 });
-    const existingPanel = openMessages.find(m => m.author.id === client.user.id && m.embeds.length > 0 && m.embeds[0]?.title?.includes("Dark Sorrows"));
-    if (!existingPanel) {
-      await postPZControlPanel(openChannel);
-    } else {
-      pzControlPanelMessageId = existingPanel.id;
-      console.log("ℹ️ PZ control panel already set up");
-    }
+    const oldPanels = openMessages.filter(m => m.author.id === client.user.id);
+    for (const msg of oldPanels.values()) await msg.delete().catch(() => {});
+    await postPZInfoPanel(openChannel);
+
+    // #server-status — wipe, post controls then live status embed below it
     const statusChannel = await client.channels.fetch(PZ_STATUS_CHANNEL_ID);
-    const statusMessages = await statusChannel.messages.fetch({ limit: 5 });
-    const existingStatus = statusMessages.find(m => m.author.id === client.user.id && m.embeds.length > 0);
-    if (existingStatus) pzStatusMessageId = existingStatus.id;
+    const statusMessages = await statusChannel.messages.fetch({ limit: 10 });
+    const oldStatus = statusMessages.filter(m => m.author.id === client.user.id);
+    for (const msg of oldStatus.values()) await msg.delete().catch(() => {});
+    await postPZServerControls(statusChannel);
     await updatePZStatusEmbed();
+
     if (pzStatusInterval) clearInterval(pzStatusInterval);
     pzStatusInterval = setInterval(updatePZStatusEmbed, 5 * 60 * 1000);
     console.log("✅ PZ channels set up");
   } catch (err) { console.error("❌ Error setting up PZ channels:", err); }
 }
 
-async function postPZControlPanel(channel) {
+// #project-zomboid — info + apply only, channel locked
+async function postPZInfoPanel(channel) {
   const embed = new EmbedBuilder()
     .setTitle("🧟 Dark Sorrows — Project Zomboid")
     .setDescription(
@@ -539,23 +543,79 @@ async function postPZControlPanel(channel) {
       "If you don't enjoy the hustle and dying a lot — this isn't for you.\n\n" +
       "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n" +
       "📋 **Want to join?** Click **Apply to Join** below!\n\n" +
-      "🔄 **Dark Sorrows PZ role** can restart or check the server using the buttons below.\n\n" +
+      "Applications are reviewed by the Dark Sorrows crew. " +
+      "You'll receive a DM once a decision has been made.\n\n" +
       "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
     )
     .setColor(0xED4245)
     .setFooter({ text: "DinoBot • Dark Sorrows PZ" });
 
   const row1 = new ActionRowBuilder().addComponents(
-    new ButtonBuilder().setCustomId("pz_apply").setLabel("Apply to Join").setEmoji("📋").setStyle(ButtonStyle.Success)
+    new ButtonBuilder().setCustomId("pz_apply").setLabel("Apply to Join").setEmoji("📋").setStyle(ButtonStyle.Success),
+    new ButtonBuilder().setCustomId("pz_leave").setLabel("Leave Server").setEmoji("🚪").setStyle(ButtonStyle.Secondary)
   );
   const row2 = new ActionRowBuilder().addComponents(
-    new ButtonBuilder().setCustomId("pz_restart").setLabel("Restart Server").setEmoji("🔄").setStyle(ButtonStyle.Danger),
-    new ButtonBuilder().setCustomId("pz_status_refresh").setLabel("Check Status").setEmoji("📡").setStyle(ButtonStyle.Secondary)
+    new ButtonBuilder().setCustomId("pz_toggle_apps").setLabel("Pause / Unpause Applications").setEmoji("⏸️").setStyle(ButtonStyle.Secondary)
   );
 
   const msg = await channel.send({ embeds: [embed], components: [row1, row2] });
   pzControlPanelMessageId = msg.id;
-  console.log("✅ PZ control panel posted");
+
+  // Lock channel — no messaging
+  try {
+    const guild = await client.guilds.fetch(GUILD_ID);
+    await channel.permissionOverwrites.edit(guild.roles.everyone.id, { SendMessages: false });
+    await channel.permissionOverwrites.edit(ROLE_IDS.unverified, { ViewChannel: false });
+  } catch (err) { console.error("❌ Error locking PZ info channel:", err); }
+
+  console.log("✅ PZ info panel posted");
+}
+
+// #server-status — restart + check status controls above the live status embed
+async function postPZServerControls(channel) {
+  const embed = new EmbedBuilder()
+    .setTitle("⚙️ Server Controls")
+    .setDescription(
+      "**Dark Sorrows PZ role** can restart or check the server.\n\n" +
+      "🔄 **Restart Server** — sends a restart command via RCON\n" +
+      "📡 **Check Status** — pulls a live player count right now\n\n" +
+      "*The status embed below auto-refreshes every 5 minutes.*"
+    )
+    .setColor(0x4F545C)
+    .setFooter({ text: "DinoBot • Dark Sorrows PZ • Staff Controls" });
+
+  const row = new ActionRowBuilder().addComponents(
+    new ButtonBuilder().setCustomId("pz_restart").setLabel("Restart Server").setEmoji("🔄").setStyle(ButtonStyle.Danger),
+    new ButtonBuilder().setCustomId("pz_status_refresh").setLabel("Check Status").setEmoji("📡").setStyle(ButtonStyle.Secondary)
+  );
+
+  await channel.send({ embeds: [embed], components: [row] });
+  console.log("✅ PZ server controls posted");
+}
+
+// Update the Apply button label in #project-zomboid to reflect paused state
+async function updatePZInfoPanelPauseState() {
+  try {
+    const openChannel = await client.channels.fetch(PZ_OPEN_CHANNEL_ID);
+    if (!pzControlPanelMessageId) return;
+    const msg = await openChannel.messages.fetch(pzControlPanelMessageId).catch(() => null);
+    if (!msg) return;
+    const row1 = new ActionRowBuilder().addComponents(
+      new ButtonBuilder().setCustomId("pz_apply")
+        .setLabel(pzApplicationsPaused ? "Applications Paused" : "Apply to Join")
+        .setEmoji(pzApplicationsPaused ? "⏸️" : "📋")
+        .setStyle(pzApplicationsPaused ? ButtonStyle.Secondary : ButtonStyle.Success)
+        .setDisabled(pzApplicationsPaused),
+      new ButtonBuilder().setCustomId("pz_leave").setLabel("Leave Server").setEmoji("🚪").setStyle(ButtonStyle.Secondary)
+    );
+    const row2 = new ActionRowBuilder().addComponents(
+      new ButtonBuilder().setCustomId("pz_toggle_apps")
+        .setLabel(pzApplicationsPaused ? "Unpause Applications" : "Pause Applications")
+        .setEmoji(pzApplicationsPaused ? "▶️" : "⏸️")
+        .setStyle(ButtonStyle.Secondary)
+    );
+    await msg.edit({ components: [row1, row2] });
+  } catch (err) { console.error("❌ Error updating PZ panel pause state:", err); }
 }
 
 // =================== END OF PART 1 ===================
@@ -728,6 +788,12 @@ client.on("interactionCreate", async (interaction) => {
 
     // PROJECT ZOMBOID — APPLY
     if (customId === "pz_apply") {
+      if (pzApplicationsPaused) {
+        await interaction.reply({ content: "⏸️ **Applications are currently paused** — the server is full!\n\nCheck back later or keep an eye on announcements for when a spot opens up. 🧟", flags: 64 }); return;
+      }
+      if (member.roles.cache.has(ROLE_IDS.darkSorrowsPZ)) {
+        await interaction.reply({ content: "✅ You're already in the **Dark Sorrows** crew!", flags: 64 }); return;
+      }
       const modal = new ModalBuilder().setCustomId("pz_apply_modal").setTitle("📋 Dark Sorrows — Application");
       modal.addComponents(
         new ActionRowBuilder().addComponents(new TextInputBuilder().setCustomId("pz_why").setLabel("Why do you want to join Dark Sorrows?").setStyle(TextInputStyle.Paragraph).setPlaceholder("Tell us why you want to join...").setMinLength(10).setMaxLength(500).setRequired(true)),
@@ -737,6 +803,59 @@ client.on("interactionCreate", async (interaction) => {
         new ActionRowBuilder().addComponents(new TextInputBuilder().setCustomId("pz_playstyle").setLabel("What's your playstyle?").setStyle(TextInputStyle.Short).setPlaceholder("e.g. Survivor, builder, scavenger, team player").setMaxLength(200).setRequired(true))
       );
       await interaction.showModal(modal); return;
+    }
+
+    // PROJECT ZOMBOID — LEAVE SERVER
+    if (customId === "pz_leave") {
+      if (!member.roles.cache.has(ROLE_IDS.darkSorrowsPZ)) {
+        await interaction.reply({ content: "❌ You're not in the **Dark Sorrows** crew.", flags: 64 }); return;
+      }
+      await member.roles.remove(ROLE_IDS.darkSorrowsPZ).catch(() => {});
+      // Unpause applications since a spot just opened
+      if (pzApplicationsPaused) {
+        pzApplicationsPaused = false;
+        await updatePZInfoPanelPauseState();
+        try {
+          const alertsChannel = await client.channels.fetch(PZ_ALERTS_CHANNEL_ID);
+          await alertsChannel.send({ embeds: [new EmbedBuilder().setTitle("🔓 Applications Reopened").setDescription(`A spot has opened up on **Dark Sorrows PZ**!
+
+${member} has left the crew. Applications are now open again.`).setColor(0x57F287).setTimestamp().setFooter({ text: "DinoBot • Dark Sorrows PZ" })] });
+        } catch {}
+      }
+      try { await user.send({ embeds: [new EmbedBuilder().setTitle("👋 You've Left Dark Sorrows PZ").setDescription("You've been removed from the **Dark Sorrows** crew and the **Dark Sorrows PZ** role has been taken away.\n\nIf you ever want to come back, just apply again! 🦕").setColor(0x4F545C).setFooter({ text: "DinoGang • Dark Sorrows PZ" })] }); } catch {}
+      try {
+        const alertsChannel = await client.channels.fetch(PZ_ALERTS_CHANNEL_ID);
+        await alertsChannel.send({ embeds: [new EmbedBuilder().setTitle("🚪 Member Left Dark Sorrows").setDescription(`${member} (${user.tag}) has left the **Dark Sorrows PZ** crew.
+
+The **Dark Sorrows PZ** role has been removed.`).setColor(0x4F545C).setTimestamp().setFooter({ text: "DinoBot • Dark Sorrows PZ" })] });
+      } catch {}
+      await interaction.reply({ content: "✅ You've been removed from the **Dark Sorrows** crew. Take care out there! 🦕", flags: 64 });
+      return;
+    }
+
+    // PROJECT ZOMBOID — TOGGLE APPLICATIONS (staff / Dark Sorrows PZ role)
+    if (customId === "pz_toggle_apps") {
+      if (!member.roles.cache.has(ROLE_IDS.darkSorrowsPZ) && !isStaff(member)) {
+        await interaction.reply({ content: "❌ Only the **Dark Sorrows PZ** role can toggle applications.", flags: 64 }); return;
+      }
+      pzApplicationsPaused = !pzApplicationsPaused;
+      await updatePZInfoPanelPauseState();
+      try {
+        const alertsChannel = await client.channels.fetch(PZ_ALERTS_CHANNEL_ID);
+        await alertsChannel.send({ embeds: [new EmbedBuilder()
+          .setTitle(pzApplicationsPaused ? "⏸️ Applications Paused" : "▶️ Applications Reopened")
+          .setDescription(pzApplicationsPaused
+            ? `Applications for **Dark Sorrows PZ** have been **paused** by ${member}.
+
+The server is full. Applications will reopen when a spot becomes available.`
+            : `Applications for **Dark Sorrows PZ** have been **reopened** by ${member}.
+
+A spot is available — applications are now open!`)
+          .setColor(pzApplicationsPaused ? 0xFFA500 : 0x57F287).setTimestamp().setFooter({ text: "DinoBot • Dark Sorrows PZ" })]
+        });
+      } catch {}
+      await interaction.reply({ content: pzApplicationsPaused ? "⏸️ Applications are now **paused**." : "▶️ Applications are now **open**.", flags: 64 });
+      return;
     }
 
     // PROJECT ZOMBOID — RESTART
@@ -814,8 +933,22 @@ client.on("interactionCreate", async (interaction) => {
       if (applicantMember) {
         await applicantMember.roles.add(ROLE_IDS.darkSorrowsPZ).catch(() => {});
         try { await applicantMember.send({ embeds: [new EmbedBuilder().setTitle("✅ Application Approved — Dark Sorrows PZ").setDescription("Your application to join **Dark Sorrows** has been **approved**! 🧟\n\nYou've been given the **Dark Sorrows PZ** role. Welcome to the crew — survive out there!\n\n*Check the #project-zomboid channel for server details.*").setColor(0x57F287).setFooter({ text: "DinoGang • Dark Sorrows PZ" })] }); } catch {}
+        // Count current PZ members and auto-pause if at cap
+        const freshGuild = await client.guilds.fetch(GUILD_ID);
+        const allMembers = await freshGuild.members.fetch();
+        const pzMemberCount = allMembers.filter(m => m.roles.cache.has(ROLE_IDS.darkSorrowsPZ)).size;
+        if (pzMemberCount >= PZ_MAX_MEMBERS && !pzApplicationsPaused) {
+          pzApplicationsPaused = true;
+          await updatePZInfoPanelPauseState();
+          try {
+            const alertsChannel = await client.channels.fetch(PZ_ALERTS_CHANNEL_ID);
+            await alertsChannel.send({ embeds: [new EmbedBuilder().setTitle("⏸️ Server Full — Applications Paused").setDescription(`**Dark Sorrows PZ** now has **${pzMemberCount}/${PZ_MAX_MEMBERS}** members.
+
+Applications have been automatically paused. They will reopen when someone leaves.`).setColor(0xFFA500).setTimestamp().setFooter({ text: "DinoBot • Dark Sorrows PZ" })] });
+          } catch {}
+        }
       }
-      await interaction.update({ embeds: [EmbedBuilder.from(interaction.message.embeds[0]).setColor(0x57F287).setTitle(`✅ Application Approved`).setFooter({ text: `Approved by ${interaction.user.tag} • DinoBot • Dark Sorrows PZ` })], components: [] });
+      await interaction.update({ embeds: [EmbedBuilder.from(interaction.message.embeds[0]).setColor(0x57F287).setTitle("✅ Application Approved").setFooter({ text: `Approved by ${interaction.user.tag} • DinoBot • Dark Sorrows PZ` })], components: [] });
       return;
     }
 
