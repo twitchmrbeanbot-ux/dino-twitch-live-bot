@@ -36,6 +36,8 @@ const MRBEAN_ANNOUNCEMENTS_CHANNEL_ID = "1480080173868257336";
 const MRBEAN_CATEGORY_ID = "1480099688739901531";
 const STREAMING_CATEGORY_ID = "1480080174123978822";
 const MRBEAN_TWITCH_LOGIN = "mrbeanthedino";
+const MRBEAN_SCHEDULE_CHANNEL_ID = "1481501043429871817";
+const CREW_SCHEDULE_CHANNEL_ID = "1481501693333213286";
 
 const FILTER_EXEMPT_CHANNELS = new Set([
   "1480089758490165433",
@@ -469,9 +471,11 @@ async function celebrateBirthday(guild, userId) {
 // ----------------------------
 async function setupMrBeanScheduleChannel() {
   const guild = await client.guilds.fetch(GUILD_ID);
-  const channels = await guild.channels.fetch();
-  let channel = channels.find(c => c.parentId === MRBEAN_CATEGORY_ID && c.name === "📅mrbean-schedule");
-  if (!channel) {
+  let channel;
+  try {
+    channel = await client.channels.fetch(MRBEAN_SCHEDULE_CHANNEL_ID);
+    console.log("ℹ️ MrBean schedule channel already exists");
+  } catch {
     channel = await guild.channels.create({
       name: "📅mrbean-schedule", type: ChannelType.GuildText, parent: MRBEAN_CATEGORY_ID,
       permissionOverwrites: [
@@ -480,8 +484,6 @@ async function setupMrBeanScheduleChannel() {
       ]
     });
     console.log("✅ MrBean schedule channel created");
-  } else {
-    console.log("ℹ️ MrBean schedule channel already exists");
   }
   mrbeanScheduleChannelId = channel.id;
   const messages = await channel.messages.fetch({ limit: 10 });
@@ -521,9 +523,11 @@ function buildMrBeanScheduleEmbed() {
 // ----------------------------
 async function setupCrewScheduleChannel() {
   const guild = await client.guilds.fetch(GUILD_ID);
-  const channels = await guild.channels.fetch();
-  let channel = channels.find(c => c.parentId === STREAMING_CATEGORY_ID && c.name === "📅crew-schedule");
-  if (!channel) {
+  let channel;
+  try {
+    channel = await client.channels.fetch(CREW_SCHEDULE_CHANNEL_ID);
+    console.log("ℹ️ Crew schedule channel already exists");
+  } catch {
     channel = await guild.channels.create({
       name: "📅crew-schedule", type: ChannelType.GuildText, parent: STREAMING_CATEGORY_ID,
       permissionOverwrites: [
@@ -532,8 +536,6 @@ async function setupCrewScheduleChannel() {
       ]
     });
     console.log("✅ Crew schedule channel created");
-  } else {
-    console.log("ℹ️ Crew schedule channel already exists");
   }
   crewScheduleChannelId = channel.id;
   const messages = await channel.messages.fetch({ limit: 10 });
@@ -1279,7 +1281,7 @@ client.on("interactionCreate", async (interaction) => {
       }
       const modal = new ModalBuilder().setCustomId("mrbean_schedule_modal").setTitle("📅 Update Your Stream Schedule");
       modal.addComponents(
-        new ActionRowBuilder().addComponents(new TextInputBuilder().setCustomId("schedule_content").setLabel("Your Schedule").setStyle(TextInputStyle.Paragraph).setPlaceholder("e.g.\nMonday / Tuesday / Wednesday — 2PM-6PM PST — Retro Games\nThursday / Friday — 2PM-6PM PST — Variety").setMinLength(10).setMaxLength(1000).setRequired(true))
+        new ActionRowBuilder().addComponents(new TextInputBuilder().setCustomId("schedule_content").setLabel("Your Schedule").setStyle(TextInputStyle.Paragraph).setPlaceholder("Mon-Wed: Retro Day | Thu-Fri: Regular Day | Add times & games").setMinLength(10).setMaxLength(1000).setRequired(true))
       );
       await interaction.showModal(modal);
       return;
