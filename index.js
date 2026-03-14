@@ -1078,6 +1078,20 @@ Applications have been automatically paused. They will reopen when someone leave
       return;
     }
 
+    // LTP — REMOVE POST button (poster only)
+    if (customId.startsWith("ltp_delete_")) {
+      const posterId = customId.replace("ltp_delete_", "");
+      if (user.id !== posterId && !isStaff(member)) {
+        await interaction.reply({ content: "❌ Only the person who posted this can remove it.", flags: 64 }); return;
+      }
+      try {
+        await interaction.message.delete();
+        activeLTPPosts.delete(posterId);
+      } catch {}
+      await interaction.reply({ content: "🗑️ Your looking-to-play post has been removed.", flags: 64 });
+      return;
+    }
+
     if (customId === "ltp_post") {
       if (!member.roles.cache.has(ROLE_IDS.goofyGoobers) && !isStaff(member)) { await interaction.reply({ content: "❌ You need to be a verified member to post here.", flags: 64 }); return; }
       if (activeLTPPosts.has(user.id)) { await interaction.reply({ content: "❌ You already have an active looking-to-play post! It will expire after 8 hours.", flags: 64 }); return; }
@@ -1276,7 +1290,8 @@ client.on("interactionCreate", async (interaction) => {
         .setColor(0x9146FF).setThumbnail(user.displayAvatarURL({ dynamic: true }))
         .setFooter({ text: "DinoBot • Looking to Play • Posts expire after 8 hours" }).setTimestamp();
       const joinRow = new ActionRowBuilder().addComponents(
-        new ButtonBuilder().setCustomId(`ltp_join_${user.id}`).setLabel("Join Up").setEmoji("🙋").setStyle(ButtonStyle.Success)
+        new ButtonBuilder().setCustomId(`ltp_join_${user.id}`).setLabel("Join Up").setEmoji("🙋").setStyle(ButtonStyle.Success),
+        new ButtonBuilder().setCustomId(`ltp_delete_${user.id}`).setLabel("Remove Post").setEmoji("🗑️").setStyle(ButtonStyle.Danger)
       );
       const ltpMsg = await channel.send({ content: `<@${user.id}>`, embeds: [embed], components: [joinRow] });
       const timeout = setTimeout(async () => {
