@@ -208,6 +208,7 @@ const PZ_MAX_MEMBERS = 4;
 const activePolls = new Map();
 const openTickets = new Map();
 const activeLTPPosts = new Map(); // userId -> { messageId, timeout }
+const ltpJoinCooldowns = new Map(); // `${posterId}_${clickerId}` -> timestamp
 
 process.on("unhandledRejection", (reason) => console.error("❌ UNHANDLED REJECTION:", reason));
 process.on("uncaughtException", (err) => console.error("❌ UNCAUGHT EXCEPTION:", err));
@@ -1061,6 +1062,22 @@ Applications have been automatically paused. They will reopen when someone leave
     }
 
     // LOOKING TO PLAY
+    // LTP — JOIN UP button
+    if (customId.startsWith("ltp_join_")) {
+      const posterId = customId.replace("ltp_join_", "");
+      if (user.id === posterId) {
+        await interaction.reply({ content: "❌ You can\'t join your own post!", flags: 64 }); return;
+      }
+      const cooldownKey = `${posterId}_${user.id}`;
+      const lastClick = ltpJoinCooldowns.get(cooldownKey);
+      if (lastClick && Date.now() - lastClick < 10 * 60 * 1000) {
+        await interaction.reply({ content: "⏳ You already let them know! Give them a moment to respond.", flags: 64 }); return;
+      }
+      ltpJoinCooldowns.set(cooldownKey, Date.now());
+      await interaction.reply({ content: `<@${posterId}> 🙋 **${member.displayName}** wants to join up with you!` });
+      return;
+    }
+
     if (customId === "ltp_post") {
       if (!member.roles.cache.has(ROLE_IDS.goofyGoobers) && !isStaff(member)) { await interaction.reply({ content: "❌ You need to be a verified member to post here.", flags: 64 }); return; }
       if (activeLTPPosts.has(user.id)) { await interaction.reply({ content: "❌ You already have an active looking-to-play post! It will expire after 8 hours.", flags: 64 }); return; }
@@ -1258,7 +1275,10 @@ client.on("interactionCreate", async (interaction) => {
         .setDescription(`🎮 **Game:** ${game}\n🖥️ **Platform:** ${platform}\n${note ? `📝 **Note:** ${note}\n` : ""}\n⏰ **Expires:** <t:${expiresTimestamp}:R>`)
         .setColor(0x9146FF).setThumbnail(user.displayAvatarURL({ dynamic: true }))
         .setFooter({ text: "DinoBot • Looking to Play • Posts expire after 8 hours" }).setTimestamp();
-      const ltpMsg = await channel.send({ content: `<@${user.id}>`, embeds: [embed] });
+      const joinRow = new ActionRowBuilder().addComponents(
+        new ButtonBuilder().setCustomId(`ltp_join_${user.id}`).setLabel("Join Up").setEmoji("🙋").setStyle(ButtonStyle.Success)
+      );
+      const ltpMsg = await channel.send({ content: `<@${user.id}>`, embeds: [embed], components: [joinRow] });
       const timeout = setTimeout(async () => {
         try { await ltpMsg.delete(); activeLTPPosts.delete(user.id); console.log(`🗑️ LTP post expired for ${user.tag}`); } catch {}
       }, 8 * 60 * 60 * 1000);
