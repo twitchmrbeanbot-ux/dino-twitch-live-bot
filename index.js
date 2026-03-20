@@ -1056,7 +1056,7 @@ Applications have been automatically paused. They will reopen when someone leave
       const modal = new ModalBuilder().setCustomId("game_suggest_modal").setTitle("🎮 Suggest a Game");
       modal.addComponents(
         new ActionRowBuilder().addComponents(new TextInputBuilder().setCustomId("game_name").setLabel("Game Name").setStyle(TextInputStyle.Short).setPlaceholder("e.g. Lethal Company").setMinLength(1).setMaxLength(100).setRequired(true)),
-        new ActionRowBuilder().addComponents(new TextInputBuilder().setCustomId("game_reason").setLabel("Why should the crew play this?").setStyle(TextInputStyle.Paragraph).setPlaceholder("Tell us why it'd be fun for the group!").setMinLength(5).setMaxLength(500).setRequired(true))
+        new ActionRowBuilder().addComponents(new TextInputBuilder().setCustomId("game_reason").setLabel("Why should MrBean play this?").setStyle(TextInputStyle.Paragraph).setPlaceholder("Tell us why Bean should play it!").setMinLength(5).setMaxLength(500).setRequired(true))
       );
       await interaction.showModal(modal); return;
     }
