@@ -931,7 +931,7 @@ async function setupBotInfoChannel() {
 }
 
 async function postBotInfoMessage(channel) {
-  const embed = new EmbedBuilder()
+  const embed1 = new EmbedBuilder()
     .setTitle("🤖 DinoBot — Server Guide")
     .setDescription(
       "Hey there! I'm **DinoBot** 🦕 — the custom bot built specifically for **DinoGang**.\n" +
@@ -963,8 +963,14 @@ async function postBotInfoMessage(channel) {
       "🎮 `#🎮looking-to-play` — find people to game with\n" +
       "🎲 `#video-game-suggestions` — suggest and vote on games for the crew\n" +
       "🎮 **Gamers** — private space for gamers *(requires Gamers role)*\n" +
-      "🎨 **Creative** — private space for creative types *(requires Creative role)*\n\n" +
-      "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n" +
+      "🎨 **Creative** — private space for creative types *(requires Creative role)*"
+    )
+    .setColor(0x9146FF)
+    .setFooter({ text: "DinoBot • Server Guide • 1/2" });
+
+  const embed2 = new EmbedBuilder()
+    .setTitle("🤖 DinoBot — How Everything Works")
+    .setDescription(
       "**👋 How Onboarding Works**\n\n" +
       "When you first join DinoBot creates a private channel just for you:\n\n" +
       "**Step 1** ✅ — Read and accept the server rules\n" +
@@ -1011,11 +1017,12 @@ async function postBotInfoMessage(channel) {
       "*DinoBot is a custom bot built for DinoGang* 🦕"
     )
     .setColor(0x9146FF)
-    .setFooter({ text: "DinoBot • Server Guide" });
-  await channel.send({ embeds: [embed] });
+    .setFooter({ text: "DinoBot • Server Guide • 2/2" });
+
+  await channel.send({ embeds: [embed1] });
+  await channel.send({ embeds: [embed2] });
   console.log("✅ Bot info message posted");
 }
-
 // ----------------------------
 // LOCK CHANNELS FOR UNVERIFIED
 // ----------------------------
