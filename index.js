@@ -39,6 +39,7 @@ const MRBEAN_TWITCH_LOGIN = "mrbeanthedino";
 const MRBEAN_SCHEDULE_CHANNEL_ID = "1481501043429871817";
 const CREW_SCHEDULE_CHANNEL_ID = "1481501693333213286";
 const LOOKING_TO_PLAY_CHANNEL_ID = "1481751127841050735";
+const GAME_SUGGESTIONS_CHANNEL_ID = "1480103931173408881";
 
 const FILTER_EXEMPT_CHANNELS = new Set([
   "1480089758490165433",
@@ -246,6 +247,7 @@ client.once("clientReady", async () => {
     await setupMrBeanScheduleChannel();
     await setupCrewScheduleChannel();
     await setupLookingToPlayChannel();
+    await setupGameSuggestionsChannel();
     await lockChannelsForUnverified();
     console.log("✅ All systems ready");
   } catch (err) {
@@ -518,6 +520,34 @@ async function setupLookingToPlayChannel() {
   );
   await channel.send({ embeds: [embed], components: [row] });
   console.log("✅ Looking to play message posted");
+}
+
+// ----------------------------
+// GAME SUGGESTIONS SYSTEM
+// ----------------------------
+async function setupGameSuggestionsChannel() {
+  const channel = await client.channels.fetch(GAME_SUGGESTIONS_CHANNEL_ID);
+  const messages = await channel.messages.fetch({ limit: 5 });
+  const botMsg = messages.find(m => m.author.id === client.user.id && m.embeds.length > 0 && m.components.length > 0);
+  if (botMsg) { console.log("ℹ️ Game suggestions channel already exists"); return; }
+  const embed = new EmbedBuilder()
+    .setTitle("🎮 Game Suggestions")
+    .setDescription(
+      "Got a game you want the crew to play together? Suggest it below!\n\n" +
+      "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n" +
+      "📝 Click **Suggest a Game** to submit your idea.\n\n" +
+      "✅ React with ✅ if you want to play it!\n" +
+      "❌ React with ❌ if you're not feeling it.\n\n" +
+      "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n" +
+      "*Anyone in the server can suggest and vote. Keep it fun!* 🦕"
+    )
+    .setColor(0x57F287)
+    .setFooter({ text: "DinoBot • Game Suggestions" });
+  const row = new ActionRowBuilder().addComponents(
+    new ButtonBuilder().setCustomId("gs_create").setLabel("Suggest a Game").setEmoji("🎮").setStyle(ButtonStyle.Success)
+  );
+  await channel.send({ embeds: [embed], components: [row] });
+  console.log("✅ Game suggestions message posted");
 }
 
 // ----------------------------
@@ -920,6 +950,7 @@ async function postBotInfoMessage(channel) {
       "🚫 **Word Filter** — auto-deletes hate speech with a 3 strike system (warning → timeout → ban)\n\n" +
       "🛡️ **Anti-Raid Protection** — detects and locks down the server if a raid is detected\n\n" +
       "🎮 **Looking to Play** — post a looking-to-play request and find people to game with\n\n" +
+      "🎲 **Game Suggestions** — suggest games for the crew to play together and vote on them\n\n" +
       "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n" +
       "**🗺️ Server Features**\n\n" +
       "📋 `#rules` — server rules, read-only\n" +
@@ -930,6 +961,7 @@ async function postBotInfoMessage(channel) {
       "📅 `#📅mrbean-schedule` — MrBeanTheDino's personal stream schedule\n" +
       "📅 `#📅crew-schedule` — full DinoGang crew stream schedule\n" +
       "🎮 `#🎮looking-to-play` — find people to game with\n" +
+      "🎲 `#video-game-suggestions` — suggest and vote on games for the crew\n" +
       "🎮 **Gamers** — private space for gamers *(requires Gamers role)*\n" +
       "🎨 **Creative** — private space for creative types *(requires Creative role)*\n\n" +
       "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n" +
@@ -965,6 +997,13 @@ async function postBotInfoMessage(channel) {
       "- Your post goes live and members can click **I'm In!** to join\n" +
       "- Posts automatically expire after 24 hours\n" +
       "- You can only have one active post at a time\n\n" +
+      "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n" +
+      "**🎲 How Game Suggestions Works**\n\n" +
+      "Head to `#video-game-suggestions` and click **Suggest a Game**:\n\n" +
+      "- Fill in the game name, platform, and why the crew should play it\n" +
+      "- React ✅ to vote yes or ❌ to vote no\n" +
+      "- Suggestions stay permanently as a record\n" +
+      "- MrBean or mods can mark a game as ✔️ Played\n\n" +
       "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n" +
       "**🛠️ Commands**\n\n" +
       "*Slash commands coming soon!*\n\n" +
@@ -1320,6 +1359,46 @@ client.on("interactionCreate", async (interaction) => {
       return;
     }
 
+    if (customId === "gs_create") {
+      if (!member.roles.cache.has(ROLE_IDS.goofyGoobers)) {
+        await interaction.reply({ content: "❌ You need to be a verified member to suggest a game.", flags: 64 });
+        return;
+      }
+      const modal = new ModalBuilder().setCustomId("gs_modal").setTitle("🎮 Suggest a Game");
+      modal.addComponents(
+        new ActionRowBuilder().addComponents(
+          new TextInputBuilder().setCustomId("gs_game").setLabel("Game Name").setStyle(TextInputStyle.Short).setPlaceholder("e.g. Phasmophobia, Minecraft, Rocket League").setMaxLength(100).setRequired(true)
+        ),
+        new ActionRowBuilder().addComponents(
+          new TextInputBuilder().setCustomId("gs_reason").setLabel("Why should the crew play this?").setStyle(TextInputStyle.Paragraph).setPlaceholder("e.g. Great co-op game, super fun with a group, free to play...").setMaxLength(500).setRequired(true)
+        ),
+        new ActionRowBuilder().addComponents(
+          new TextInputBuilder().setCustomId("gs_platform").setLabel("Platform").setStyle(TextInputStyle.Short).setPlaceholder("e.g. PC, PS5, Xbox, Cross-platform").setMaxLength(50).setRequired(true)
+        )
+      );
+      await interaction.showModal(modal);
+      return;
+    }
+
+    if (customId.startsWith("gs_played_")) {
+      if (!member.roles.cache.has(ROLE_IDS.mods) && !member.roles.cache.has(ROLE_IDS.admin) && user.id !== guild.ownerId) {
+        await interaction.reply({ content: "❌ Only MrBean, Mods, and Admins can mark a game as played.", flags: 64 });
+        return;
+      }
+      try {
+        const playedEmbed = EmbedBuilder.from(interaction.message.embeds[0])
+          .setColor(0x95a5a6)
+          .setTitle(interaction.message.embeds[0].title + " — ✔️ Played")
+          .setFooter({ text: `Marked as played by ${interaction.user.tag} • DinoBot • Game Suggestions` });
+        await interaction.update({ embeds: [playedEmbed], components: [] });
+        console.log(`✅ Game marked as played by ${interaction.user.tag}`);
+      } catch (err) {
+        console.error("❌ Error marking game as played:", err);
+        await interaction.reply({ content: "❌ Something went wrong.", flags: 64 });
+      }
+      return;
+    }
+
     if (customId === "lfg_create") {
       if (!member.roles.cache.has(ROLE_IDS.goofyGoobers)) {
         await interaction.reply({ content: "❌ You need to be a verified member to post a looking-to-play request.", flags: 64 });
@@ -1580,6 +1659,38 @@ client.on("interactionCreate", async (interaction) => {
   if (!interaction.isModalSubmit()) return;
   const { customId, user, guild } = interaction;
   const member = await guild.members.fetch(user.id);
+
+  if (customId === "gs_modal") {
+    const game = interaction.fields.getTextInputValue("gs_game").trim();
+    const reason = interaction.fields.getTextInputValue("gs_reason").trim();
+    const platform = interaction.fields.getTextInputValue("gs_platform").trim();
+    try {
+      const gsChannel = await client.channels.fetch(GAME_SUGGESTIONS_CHANNEL_ID);
+      const embed = new EmbedBuilder()
+        .setTitle(`🎮 ${game}`)
+        .setDescription(
+          `${reason}\n\n` +
+          `━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n` +
+          `**Platform:** ${platform}\n\n` +
+          `✅ React to vote yes  •  ❌ React to vote no`
+        )
+        .setColor(0x57F287)
+        .setTimestamp()
+        .setFooter({ text: `Suggested by ${member.displayName} • DinoBot • Game Suggestions` });
+      const row = new ActionRowBuilder().addComponents(
+        new ButtonBuilder().setCustomId(`gs_played_${Date.now()}`).setLabel("Mark as Played").setEmoji("✔️").setStyle(ButtonStyle.Secondary)
+      );
+      const msg = await gsChannel.send({ embeds: [embed], components: [row] });
+      await msg.react("✅");
+      await msg.react("❌");
+      await interaction.reply({ content: `✅ Your suggestion for **${game}** has been posted! 🎮`, flags: 64 });
+      console.log(`✅ Game suggested by ${member.displayName}: ${game}`);
+    } catch (err) {
+      console.error("❌ Error posting game suggestion:", err);
+      await interaction.reply({ content: "❌ Something went wrong. Please try again.", flags: 64 });
+    }
+    return;
+  }
 
   if (customId === "lfg_modal") {
     const game = interaction.fields.getTextInputValue("lfg_game").trim();
