@@ -42,6 +42,7 @@ const LOOKING_TO_PLAY_CHANNEL_ID = "1481751127841050735";
 const GAME_SUGGESTIONS_CHANNEL_ID = "1490442756181590087";
 const PZ_STATUS_CHANNEL_ID = "1481760930592460830";
 const PZ_ROLE_ID = "1481760167518539851";
+const PZ_APPLICATION_CHANNEL_ID = "1480253903407681599";
 
 const FILTER_EXEMPT_CHANNELS = new Set([
   "1480089758490165433",
@@ -207,6 +208,7 @@ let crewScheduleChannelId = null;
 let crewScheduleMessageId = null;
 let mrbeanScheduleMessageId = null;
 let pzStatusMessageId = null;
+let pzApplicationsPaused = false;
 
 const openTickets = new Map();
 const activeLFG = new Map();
@@ -247,6 +249,7 @@ client.once("clientReady", async () => {
     await setupLookingToPlayChannel();
     await setupGameSuggestionsChannel();
     await setupPZChannel();
+    await setupPZApplicationChannel();
     await lockChannelsForUnverified();
     console.log("✅ All systems ready");
   } catch (err) {
@@ -638,7 +641,7 @@ async function getPZStatus() {
     return {
       online: data.status === "online" || data.online === true,
       players: data.players_online || data.current_players || 0,
-      maxPlayers: data.max_players || data.max_players || 0,
+      maxPlayers: data.max_players || 0,
       playerList: data.player_list || data.players || []
     };
   } catch (err) {
@@ -685,6 +688,49 @@ async function sendPZRconCommand(command) {
     console.error("❌ PZ RCON error:", err);
     return null;
   }
+}
+
+// ----------------------------
+// PZ APPLICATION CHANNEL
+// ----------------------------
+async function setupPZApplicationChannel() {
+  try {
+    const channel = await client.channels.fetch(PZ_APPLICATION_CHANNEL_ID);
+    const messages = await channel.messages.fetch({ limit: 10 });
+    const botMsg = messages.find(m => m.author.id === client.user.id && m.embeds.length > 0 && m.components.length > 0);
+    if (botMsg) { console.log("ℹ️ PZ application channel already exists"); return; }
+    for (const msg of messages.filter(m => m.author.id === client.user.id).values()) {
+      await msg.delete().catch(() => {});
+    }
+    await postPZApplicationPanel(channel);
+  } catch (err) {
+    console.error("❌ PZ application setup error:", err);
+  }
+}
+
+async function postPZApplicationPanel(channel) {
+  const embed = new EmbedBuilder()
+    .setTitle("🧟 Dark Sorrows — Project Zomboid")
+    .setDescription(
+      "**Build 42 Unstable** | Slots: 3-4\n\n" +
+      "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n" +
+      "Dark Sorrows is our heavy hitter zombie apocalypse dedicated server. When you go out in the world you probably won't come back unless you got the team with you. This isn't a \"hardcore\" server. We fight to survive and have fun doing it. If you don't enjoy the hustle and dying a lot — this isn't for you.\n\n" +
+      "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n" +
+      "📋 **Want to join?** Click **Apply to Join** below!\n\n" +
+      "You'll be added to the Dark Sorrows crew instantly.\n\n" +
+      "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+    )
+    .setColor(0xED4245)
+    .setFooter({ text: "DinoBot • Dark Sorrows PZ" });
+  const row1 = new ActionRowBuilder().addComponents(
+    new ButtonBuilder().setCustomId("pz_apply").setLabel("Apply to Join").setEmoji("📋").setStyle(ButtonStyle.Success),
+    new ButtonBuilder().setCustomId("pz_leave").setLabel("Leave Server").setEmoji("📤").setStyle(ButtonStyle.Secondary)
+  );
+  const row2 = new ActionRowBuilder().addComponents(
+    new ButtonBuilder().setCustomId("pz_toggle_applications").setLabel("Pause / Unpause Applications").setEmoji("⏸️").setStyle(ButtonStyle.Primary)
+  );
+  await channel.send({ embeds: [embed], components: [row1, row2] });
+  console.log("✅ PZ application panel posted");
 }
 
 // ----------------------------
@@ -1088,7 +1134,7 @@ async function postBotInfoMessage(channel) {
       "🛡️ **Anti-Raid Protection** — detects and locks down the server if a raid is detected\n\n" +
       "🎮 **Looking to Play** — post a looking-to-play request and find people to game with\n\n" +
       "🎲 **Game Suggestions** — suggest games for the crew to play together and vote on them\n\n" +
-      "🧟 **Project Zomboid** — live server status, restart and check controls for Dark Sorrows PZ\n\n" +
+      "🧟 **Project Zomboid** — live server status, restart controls, and apply to join Dark Sorrows\n\n" +
       "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n" +
       "**🗺️ Server Features**\n\n" +
       "📋 `#rules` — server rules, read-only\n" +
@@ -1500,6 +1546,43 @@ client.on("interactionCreate", async (interaction) => {
         console.error("❌ Error kicking member:", err);
         await interaction.reply({ content: "❌ Failed to kick member.", flags: 64 });
       }
+      return;
+    }
+
+    if (customId === "pz_apply") {
+      if (pzApplicationsPaused) {
+        await interaction.reply({ content: "❌ Applications are currently closed. Check back later!", flags: 64 });
+        return;
+      }
+      if (member.roles.cache.has(PZ_ROLE_ID)) {
+        await interaction.reply({ content: "✅ You're already in the Dark Sorrows crew!", flags: 64 });
+        return;
+      }
+      await member.roles.add(PZ_ROLE_ID);
+      await interaction.reply({ content: "✅ Welcome to **Dark Sorrows**! 🧟 You've been added to the crew. Check the server channels for connection info.", flags: 64 });
+      console.log(`✅ ${user.tag} joined Dark Sorrows PZ`);
+      return;
+    }
+
+    if (customId === "pz_leave") {
+      if (!member.roles.cache.has(PZ_ROLE_ID)) {
+        await interaction.reply({ content: "❌ You're not in the Dark Sorrows crew!", flags: 64 });
+        return;
+      }
+      await member.roles.remove(PZ_ROLE_ID);
+      await interaction.reply({ content: "👋 You've left **Dark Sorrows**. You can rejoin anytime by clicking Apply to Join.", flags: 64 });
+      console.log(`👋 ${user.tag} left Dark Sorrows PZ`);
+      return;
+    }
+
+    if (customId === "pz_toggle_applications") {
+      if (!member.roles.cache.has(ROLE_IDS.mods) && !member.roles.cache.has(ROLE_IDS.admin) && !member.roles.cache.has(ROLE_IDS.owner)) {
+        await interaction.reply({ content: "❌ Only Mods, Admins, and Owners can pause applications.", flags: 64 });
+        return;
+      }
+      pzApplicationsPaused = !pzApplicationsPaused;
+      await interaction.reply({ content: pzApplicationsPaused ? "⏸️ Applications are now **paused**. Members cannot join until you unpause." : "▶️ Applications are now **open**. Members can join again.", flags: 64 });
+      console.log(`${pzApplicationsPaused ? "⏸️" : "▶️"} PZ applications ${pzApplicationsPaused ? "paused" : "unpaused"} by ${user.tag}`);
       return;
     }
 
