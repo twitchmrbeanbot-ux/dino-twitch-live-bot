@@ -1,5 +1,6 @@
 require("dotenv").config();
 const express = require("express");
+const { Rcon } = require("rcon-client");
 const {
   Client,
   GatewayIntentBits,
@@ -555,6 +556,56 @@ async function setupGameSuggestionsChannel() {
 // ----------------------------
 // PROJECT ZOMBOID SYSTEM
 // ----------------------------
+async function getPZStatus() {
+  let rcon;
+  try {
+    rcon = new Rcon({
+      host: process.env.PZ_RCON_HOST,
+      port: parseInt(process.env.PZ_RCON_PORT),
+      password: process.env.PZ_RCON_PASSWORD,
+      timeout: 5000
+    });
+    await rcon.connect();
+    const response = await rcon.send("players");
+    await rcon.end();
+    const playerMatch = response.match(/Players connected \((\d+)\)/);
+    const playerCount = playerMatch ? parseInt(playerMatch[1]) : 0;
+    const playerList = [];
+    const lines = response.split("\n");
+    for (const line of lines) {
+      const trimmed = line.trim();
+      if (trimmed.startsWith("-")) {
+        playerList.push(trimmed.replace(/^-\s*/, ""));
+      }
+    }
+    return { online: true, players: playerCount, maxPlayers: 0, playerList };
+  } catch (err) {
+    console.error("❌ PZ RCON status error:", err.message);
+    if (rcon) rcon.end().catch(() => {});
+    return { online: false, players: 0, maxPlayers: 0, playerList: [] };
+  }
+}
+
+async function sendPZRconCommand(command) {
+  let rcon;
+  try {
+    rcon = new Rcon({
+      host: process.env.PZ_RCON_HOST,
+      port: parseInt(process.env.PZ_RCON_PORT),
+      password: process.env.PZ_RCON_PASSWORD,
+      timeout: 5000
+    });
+    await rcon.connect();
+    const response = await rcon.send(command);
+    await rcon.end();
+    return response || "Command sent.";
+  } catch (err) {
+    console.error("❌ PZ RCON command error:", err.message);
+    if (rcon) rcon.end().catch(() => {});
+    return null;
+  }
+}
+
 async function setupPZChannel() {
   try {
     const channel = await client.channels.fetch(PZ_STATUS_CHANNEL_ID);
@@ -600,54 +651,20 @@ async function postPZPanel(channel) {
 }
 
 async function buildPZStatusEmbed() {
-  try {
-    const status = await getPZStatus();
-    return new EmbedBuilder()
-      .setTitle("🧟 Dark Sorrows — Project Zomboid Server")
-      .setDescription(
-        `**Server Status:** ${status.online ? "🟢 Online" : "🔴 Offline"}\n\n` +
-        (status.online
-          ? `**Players Online:** ${status.players}/${status.maxPlayers}\n\n` +
-            (status.playerList.length > 0 ? `**Online Now:**\n${status.playerList.map(p => `• ${p}`).join("\n")}\n\n` : "")
-          : `*The server appears to be offline or unreachable.*\n\n`) +
-        "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-      )
-      .setColor(status.online ? 0x57F287 : 0xED4245)
-      .setFooter({ text: `DinoBot • PZ Status • Auto-refreshes every 5 minutes` })
-      .setTimestamp();
-  } catch (err) {
-    return new EmbedBuilder()
-      .setTitle("🧟 Dark Sorrows — Project Zomboid Server")
-      .setDescription("**Server Status:** 🔴 Offline\n\n*The server appears to be offline or unreachable.*\n\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
-      .setColor(0xED4245)
-      .setFooter({ text: `DinoBot • PZ Status • Auto-refreshes every 5 minutes` })
-      .setTimestamp();
-  }
-}
-
-async function getPZStatus() {
-  try {
-    const res = await fetch(
-      `https://api.indifferentbroccoli.com/api/v1/servers/${process.env.PZ_SERVER_ID}/status`,
-      {
-        headers: {
-          "Authorization": `Bearer ${process.env.PZ_API_KEY}`,
-          "Content-Type": "application/json"
-        }
-      }
-    );
-    if (!res.ok) throw new Error(`API error: ${res.status}`);
-    const data = await res.json();
-    return {
-      online: data.status === "online" || data.online === true,
-      players: data.players_online || data.current_players || 0,
-      maxPlayers: data.max_players || 0,
-      playerList: data.player_list || data.players || []
-    };
-  } catch (err) {
-    console.error("❌ PZ status fetch error:", err);
-    return { online: false, players: 0, maxPlayers: 0, playerList: [] };
-  }
+  const status = await getPZStatus();
+  return new EmbedBuilder()
+    .setTitle("🧟 Dark Sorrows — Project Zomboid Server")
+    .setDescription(
+      `**Server Status:** ${status.online ? "🟢 Online" : "🔴 Offline"}\n\n` +
+      (status.online
+        ? `**Players Online:** ${status.players}\n\n` +
+          (status.playerList.length > 0 ? `**Online Now:**\n${status.playerList.map(p => `• ${p}`).join("\n")}\n\n` : "")
+        : `*The server appears to be offline or unreachable.*\n\n`) +
+      "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+    )
+    .setColor(status.online ? 0x57F287 : 0xED4245)
+    .setFooter({ text: `DinoBot • PZ Status • Auto-refreshes every 5 minutes` })
+    .setTimestamp();
 }
 
 async function refreshPZStatus() {
@@ -666,28 +683,6 @@ async function refreshPZStatus() {
 function startPZAutoRefresh() {
   setInterval(refreshPZStatus, 5 * 60 * 1000);
   console.log("✅ PZ auto-refresh started");
-}
-
-async function sendPZRconCommand(command) {
-  try {
-    const res = await fetch(
-      `https://api.indifferentbroccoli.com/api/v1/servers/${process.env.PZ_SERVER_ID}/rcon`,
-      {
-        method: "POST",
-        headers: {
-          "Authorization": `Bearer ${process.env.PZ_API_KEY}`,
-          "Content-Type": "application/json"
-        },
-        body: JSON.stringify({ command })
-      }
-    );
-    if (!res.ok) throw new Error(`RCON error: ${res.status}`);
-    const data = await res.json();
-    return data.response || "Command sent.";
-  } catch (err) {
-    console.error("❌ PZ RCON error:", err);
-    return null;
-  }
 }
 
 // ----------------------------
@@ -1581,7 +1576,7 @@ client.on("interactionCreate", async (interaction) => {
         return;
       }
       pzApplicationsPaused = !pzApplicationsPaused;
-      await interaction.reply({ content: pzApplicationsPaused ? "⏸️ Applications are now **paused**. Members cannot join until you unpause." : "▶️ Applications are now **open**. Members can join again.", flags: 64 });
+      await interaction.reply({ content: pzApplicationsPaused ? "⏸️ Applications are now **paused**." : "▶️ Applications are now **open**.", flags: 64 });
       console.log(`${pzApplicationsPaused ? "⏸️" : "▶️"} PZ applications ${pzApplicationsPaused ? "paused" : "unpaused"} by ${user.tag}`);
       return;
     }
@@ -1608,7 +1603,7 @@ client.on("interactionCreate", async (interaction) => {
         const status = await getPZStatus();
         await interaction.editReply({
           content: status.online
-            ? `🟢 Server is **Online** — **${status.players}/${status.maxPlayers}** players connected.`
+            ? `🟢 Server is **Online** — **${status.players}** players connected.`
             : "🔴 Server is **Offline** or unreachable."
         });
         return;
