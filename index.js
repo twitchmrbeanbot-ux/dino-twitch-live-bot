@@ -40,6 +40,8 @@ const MRBEAN_SCHEDULE_CHANNEL_ID = "1481501043429871817";
 const CREW_SCHEDULE_CHANNEL_ID = "1481501693333213286";
 const LOOKING_TO_PLAY_CHANNEL_ID = "1481751127841050735";
 const GAME_SUGGESTIONS_CHANNEL_ID = "1490442756181590087";
+const PZ_STATUS_CHANNEL_ID = "1481760930592460830";
+const PZ_ROLE_ID = "1481760167518539851";
 
 const FILTER_EXEMPT_CHANNELS = new Set([
   "1480089758490165433",
@@ -68,7 +70,6 @@ async function checkRaid(guild, newMember) {
   const now = Date.now();
   recentJoins = recentJoins.filter(t => now - t.timestamp < RAID_JOIN_WINDOW);
   recentJoins.push({ timestamp: now, userId: newMember.id, tag: newMember.user.tag });
-
   if (raidLockdownActive) {
     try {
       await newMember.send({
@@ -83,7 +84,6 @@ async function checkRaid(guild, newMember) {
     console.log(`🦵 Kicked during lockdown: ${newMember.user.tag}`);
     return true;
   }
-
   if (recentJoins.length >= RAID_JOIN_THRESHOLD) {
     await activateRaidLockdown(guild);
     return true;
@@ -95,16 +95,13 @@ async function activateRaidLockdown(guild) {
   if (raidLockdownActive) return;
   raidLockdownActive = true;
   console.log("🚨 RAID DETECTED — Lockdown activated");
-
   try {
     await guild.setVerificationLevel(4, "Anti-raid lockdown activated");
     console.log("✅ Verification level set to highest");
   } catch (err) {
     console.error("❌ Error setting verification level:", err);
   }
-
   const joinerList = recentJoins.map(j => `• <@${j.userId}> (${j.tag})`).join("\n");
-
   try {
     const modLogs = await client.channels.fetch(MOD_LOGS_CHANNEL_ID);
     const embed = new EmbedBuilder()
@@ -209,6 +206,7 @@ let mrbeanScheduleChannelId = null;
 let crewScheduleChannelId = null;
 let crewScheduleMessageId = null;
 let mrbeanScheduleMessageId = null;
+let pzStatusMessageId = null;
 
 const openTickets = new Map();
 const activeLFG = new Map();
@@ -248,6 +246,7 @@ client.once("clientReady", async () => {
     await setupCrewScheduleChannel();
     await setupLookingToPlayChannel();
     await setupGameSuggestionsChannel();
+    await setupPZChannel();
     await lockChannelsForUnverified();
     console.log("✅ All systems ready");
   } catch (err) {
@@ -551,6 +550,144 @@ async function setupGameSuggestionsChannel() {
 }
 
 // ----------------------------
+// PROJECT ZOMBOID SYSTEM
+// ----------------------------
+async function setupPZChannel() {
+  try {
+    const channel = await client.channels.fetch(PZ_STATUS_CHANNEL_ID);
+    const messages = await channel.messages.fetch({ limit: 10 });
+    const controlMsg = messages.find(m => m.author.id === client.user.id && m.components.length > 0);
+    const statusMsg = messages.find(m => m.author.id === client.user.id && m.embeds.length > 0 && m.components.length === 0);
+    if (controlMsg && statusMsg) {
+      pzStatusMessageId = statusMsg.id;
+      console.log("ℹ️ PZ channel already exists");
+      startPZAutoRefresh();
+      return;
+    }
+    for (const msg of messages.filter(m => m.author.id === client.user.id).values()) {
+      await msg.delete().catch(() => {});
+    }
+    await postPZPanel(channel);
+  } catch (err) {
+    console.error("❌ PZ setup error:", err);
+  }
+}
+
+async function postPZPanel(channel) {
+  const controlEmbed = new EmbedBuilder()
+    .setTitle("⚙️ Server Controls")
+    .setDescription(
+      `**Dark Sorrows PZ role** can restart or check the server.\n\n` +
+      `🔄 **Restart Server** — sends a restart command via RCON\n` +
+      `🔍 **Check Status** — pulls a live player count right now\n\n` +
+      `*The status embed below auto-refreshes every 5 minutes.*`
+    )
+    .setColor(0x9146FF)
+    .setFooter({ text: "DinoBot • Dark Sorrows PZ • Staff Controls" });
+  const row = new ActionRowBuilder().addComponents(
+    new ButtonBuilder().setCustomId("pz_restart").setLabel("Restart Server").setEmoji("🔄").setStyle(ButtonStyle.Danger),
+    new ButtonBuilder().setCustomId("pz_status").setLabel("Check Status").setEmoji("🔍").setStyle(ButtonStyle.Secondary)
+  );
+  await channel.send({ embeds: [controlEmbed], components: [row] });
+  const statusEmbed = await buildPZStatusEmbed();
+  const msg = await channel.send({ embeds: [statusEmbed] });
+  pzStatusMessageId = msg.id;
+  startPZAutoRefresh();
+  console.log("✅ PZ panel posted");
+}
+
+async function buildPZStatusEmbed() {
+  try {
+    const status = await getPZStatus();
+    return new EmbedBuilder()
+      .setTitle("🧟 Dark Sorrows — Project Zomboid Server")
+      .setDescription(
+        `**Server Status:** ${status.online ? "🟢 Online" : "🔴 Offline"}\n\n` +
+        (status.online
+          ? `**Players Online:** ${status.players}/${status.maxPlayers}\n\n` +
+            (status.playerList.length > 0 ? `**Online Now:**\n${status.playerList.map(p => `• ${p}`).join("\n")}\n\n` : "")
+          : `*The server appears to be offline or unreachable.*\n\n`) +
+        "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+      )
+      .setColor(status.online ? 0x57F287 : 0xED4245)
+      .setFooter({ text: `DinoBot • PZ Status • Auto-refreshes every 5 minutes` })
+      .setTimestamp();
+  } catch (err) {
+    return new EmbedBuilder()
+      .setTitle("🧟 Dark Sorrows — Project Zomboid Server")
+      .setDescription("**Server Status:** 🔴 Offline\n\n*The server appears to be offline or unreachable.*\n\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
+      .setColor(0xED4245)
+      .setFooter({ text: `DinoBot • PZ Status • Auto-refreshes every 5 minutes` })
+      .setTimestamp();
+  }
+}
+
+async function getPZStatus() {
+  try {
+    const res = await fetch(
+      `https://api.indifferentbroccoli.com/api/v1/servers/${process.env.PZ_SERVER_ID}/status`,
+      {
+        headers: {
+          "Authorization": `Bearer ${process.env.PZ_API_KEY}`,
+          "Content-Type": "application/json"
+        }
+      }
+    );
+    if (!res.ok) throw new Error(`API error: ${res.status}`);
+    const data = await res.json();
+    return {
+      online: data.status === "online" || data.online === true,
+      players: data.players_online || data.current_players || 0,
+      maxPlayers: data.max_players || data.max_players || 0,
+      playerList: data.player_list || data.players || []
+    };
+  } catch (err) {
+    console.error("❌ PZ status fetch error:", err);
+    return { online: false, players: 0, maxPlayers: 0, playerList: [] };
+  }
+}
+
+async function refreshPZStatus() {
+  try {
+    const channel = await client.channels.fetch(PZ_STATUS_CHANNEL_ID);
+    const msg = await channel.messages.fetch(pzStatusMessageId).catch(() => null);
+    if (!msg) return;
+    const embed = await buildPZStatusEmbed();
+    await msg.edit({ embeds: [embed] });
+    console.log("🔄 PZ status refreshed");
+  } catch (err) {
+    console.error("❌ PZ status refresh error:", err);
+  }
+}
+
+function startPZAutoRefresh() {
+  setInterval(refreshPZStatus, 5 * 60 * 1000);
+  console.log("✅ PZ auto-refresh started");
+}
+
+async function sendPZRconCommand(command) {
+  try {
+    const res = await fetch(
+      `https://api.indifferentbroccoli.com/api/v1/servers/${process.env.PZ_SERVER_ID}/rcon`,
+      {
+        method: "POST",
+        headers: {
+          "Authorization": `Bearer ${process.env.PZ_API_KEY}`,
+          "Content-Type": "application/json"
+        },
+        body: JSON.stringify({ command })
+      }
+    );
+    if (!res.ok) throw new Error(`RCON error: ${res.status}`);
+    const data = await res.json();
+    return data.response || "Command sent.";
+  } catch (err) {
+    console.error("❌ PZ RCON error:", err);
+    return null;
+  }
+}
+
+// ----------------------------
 // SETUP MRBEAN SCHEDULE CHANNEL
 // ----------------------------
 async function setupMrBeanScheduleChannel() {
@@ -696,9 +833,9 @@ async function setupBirthdayCategory() {
 // ----------------------------
 async function setupBirthdayRegisterChannel() {
   const channel = await client.channels.fetch(BIRTHDAY_REGISTER_CHANNEL_ID);
-  const messages = await channel.messages.fetch({ limit: 5 });
-  const botMsg = messages.find(m => m.author.id === client.user.id && m.embeds.length > 0);
-  if (botMsg) { console.log("ℹ️ Birthday register channel already exists"); return; }
+  const messages = await channel.messages.fetch({ limit: 10 });
+  const botMsgs = messages.filter(m => m.author.id === client.user.id);
+  for (const msg of botMsgs.values()) await msg.delete().catch(() => {});
   await postBirthdayRegisterMessage(channel);
 }
 
@@ -951,6 +1088,7 @@ async function postBotInfoMessage(channel) {
       "🛡️ **Anti-Raid Protection** — detects and locks down the server if a raid is detected\n\n" +
       "🎮 **Looking to Play** — post a looking-to-play request and find people to game with\n\n" +
       "🎲 **Game Suggestions** — suggest games for the crew to play together and vote on them\n\n" +
+      "🧟 **Project Zomboid** — live server status, restart and check controls for Dark Sorrows PZ\n\n" +
       "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n" +
       "**🗺️ Server Features**\n\n" +
       "📋 `#rules` — server rules, read-only\n" +
@@ -1023,6 +1161,7 @@ async function postBotInfoMessage(channel) {
   await channel.send({ embeds: [embed2] });
   console.log("✅ Bot info message posted");
 }
+
 // ----------------------------
 // LOCK CHANNELS FOR UNVERIFIED
 // ----------------------------
@@ -1181,7 +1320,6 @@ async function createOnboardingChannel(guild, member) {
       ]
     });
     console.log(`✅ Created onboarding channel for ${member.user.tag}`);
-
     setTimeout(async () => {
       try {
         const freshMember = await guild.members.fetch(member.id).catch(() => null);
@@ -1209,7 +1347,6 @@ async function createOnboardingChannel(guild, member) {
         console.error("❌ Onboarding timeout error:", err);
       }
     }, 24 * 60 * 60 * 1000);
-
     const rulesEmbed = new EmbedBuilder()
       .setTitle("📋 Server Rules")
       .setDescription(
@@ -1366,6 +1503,35 @@ client.on("interactionCreate", async (interaction) => {
       return;
     }
 
+    if (customId === "pz_restart" || customId === "pz_status") {
+      if (!member.roles.cache.has(PZ_ROLE_ID) && !member.roles.cache.has(ROLE_IDS.admin) && !member.roles.cache.has(ROLE_IDS.owner)) {
+        await interaction.reply({ content: "❌ Only the **Dark Sorrows PZ** role can use these controls.", flags: 64 });
+        return;
+      }
+      if (customId === "pz_restart") {
+        await interaction.reply({ content: "🔄 Sending restart command to the server...", flags: 64 });
+        const response = await sendPZRconCommand("quit");
+        if (response !== null) {
+          await interaction.editReply({ content: "✅ Restart command sent! The server should be back up in a few minutes." });
+          setTimeout(refreshPZStatus, 30000);
+        } else {
+          await interaction.editReply({ content: "❌ Failed to send restart command. Is the server online?" });
+        }
+        return;
+      }
+      if (customId === "pz_status") {
+        await interaction.reply({ content: "🔍 Checking server status...", flags: 64 });
+        await refreshPZStatus();
+        const status = await getPZStatus();
+        await interaction.editReply({
+          content: status.online
+            ? `🟢 Server is **Online** — **${status.players}/${status.maxPlayers}** players connected.`
+            : "🔴 Server is **Offline** or unreachable."
+        });
+        return;
+      }
+    }
+
     if (customId === "gs_create") {
       if (!member.roles.cache.has(ROLE_IDS.goofyGoobers)) {
         await interaction.reply({ content: "❌ You need to be a verified member to suggest a game.", flags: 64 });
@@ -1504,6 +1670,15 @@ client.on("interactionCreate", async (interaction) => {
     }
 
     if (customId === "birthday_set") {
+      if (birthdays[user.id]) {
+        const monthNames = ["January","February","March","April","May","June","July","August","September","October","November","December"];
+        const existing = birthdays[user.id];
+        await interaction.reply({
+          content: `🎂 You already have a birthday registered: **${monthNames[existing.month - 1]} ${existing.day}**\n\nIf you'd like to change it, click **Remove My Birthday** first then set a new one.`,
+          flags: 64
+        });
+        return;
+      }
       const modal = new ModalBuilder().setCustomId("birthday_modal_set").setTitle("🎂 Set Your Birthday");
       modal.addComponents(
         new ActionRowBuilder().addComponents(new TextInputBuilder().setCustomId("birthday_month").setLabel("Birth Month (1-12)").setStyle(TextInputStyle.Short).setPlaceholder("e.g. 3 for March, 12 for December").setMinLength(1).setMaxLength(2).setRequired(true)),
@@ -1594,7 +1769,7 @@ client.on("interactionCreate", async (interaction) => {
 
     const parts = customId.split("_");
     const memberId = parts[parts.length - 1];
-    if (memberId !== user.id) { await interaction.reply({ content: "❌ These buttons are not for you!", flags: 64 }); return; }
+    if (memberId !== user.id) return;
 
     if (customId.startsWith("onboard_accept_rules_")) {
       await member.roles.remove(ROLE_IDS.unverified);
